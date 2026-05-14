@@ -191,16 +191,27 @@
       '</div>',
     ].join('');
     document.body.appendChild(menuRoot);
-    ['mousedown', 'mouseup', 'click', 'pointerdown', 'pointerup'].forEach((evt) => {
+    // 阻断所有底层 canvas 事件
+    const allEvents = ['mousedown', 'mouseup', 'click', 'pointerdown', 'pointerup', 'touchstart', 'touchend', 'wheel'];
+    allEvents.forEach((evt) => {
       menuRoot.addEventListener(evt, (e) => {
         e.stopPropagation();
         e.stopImmediatePropagation();
       }, true);
     });
-    menuRoot.addEventListener('click', (e) => {
-      const btn = e.target.closest('button[data-act]');
-      if (!btn) return;
-      OnlineMenu.close(btn.dataset.act);
+    // 给每个按钮都加直接处理（不依赖事件委托）
+    menuRoot.querySelectorAll('button[data-act]').forEach((btn) => {
+      const act = btn.dataset.act;
+      allEvents.forEach((evt) => {
+        btn.addEventListener(evt, (e) => {
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          if (e.preventDefault) e.preventDefault();
+          if (evt === 'click' || evt === 'touchend') {
+            OnlineMenu.close(act);
+          }
+        }, true);
+      });
     });
   }
 
