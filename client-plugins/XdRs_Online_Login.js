@@ -66,6 +66,15 @@
     }
   }
 
+  function getSpawnFromGame() {
+    const sys = (typeof $dataSystem !== 'undefined' && $dataSystem) ? $dataSystem : null;
+    return {
+      mapId: (sys && sys.startMapId) || cfg.defaultMapId,
+      x: (sys && sys.startX != null) ? sys.startX : cfg.spawnX,
+      y: (sys && sys.startY != null) ? sys.startY : cfg.spawnY,
+    };
+  }
+
   Scene_Title.prototype.commandXsgOnline = function () {
     const scene = this;
     if (this._commandWindow) this._commandWindow.close();
@@ -78,12 +87,13 @@
         return;
       }
       const ch = Core.session.character;
+      const spawn = getSpawnFromGame();
       DataManager.setupNewGame();
       $gameParty.setupStartingMembers();
       $gamePlayer.reserveTransfer(
-        ch.mapId || cfg.defaultMapId,
-        ch.x != null ? ch.x : cfg.spawnX,
-        ch.y != null ? ch.y : cfg.spawnY,
+        ch.mapId || spawn.mapId,
+        ch.x != null ? ch.x : spawn.x,
+        ch.y != null ? ch.y : spawn.y,
         ch.d || 2,
         0,
       );

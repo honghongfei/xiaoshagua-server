@@ -89,12 +89,16 @@
     Re.tryResume().then((ok) => {
       if (!ok) return;
       const ch = Core.session.character;
+      const sys = (typeof $dataSystem !== 'undefined' && $dataSystem) ? $dataSystem : null;
+      const fbMap = (sys && sys.startMapId) || 1;
+      const fbX = (sys && sys.startX != null) ? sys.startX : 8;
+      const fbY = (sys && sys.startY != null) ? sys.startY : 6;
       DataManager.setupNewGame();
       $gameParty.setupStartingMembers();
       $gamePlayer.reserveTransfer(
-        ch.mapId || 1,
-        ch.x != null ? ch.x : 8,
-        ch.y != null ? ch.y : 6,
+        ch.mapId || fbMap,
+        ch.x != null ? ch.x : fbX,
+        ch.y != null ? ch.y : fbY,
         ch.d || 2,
         0,
       );
