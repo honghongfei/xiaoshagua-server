@@ -14,9 +14,11 @@ fix-attempt.js
 sim-click*.js
 trigger-dialog.js
 cdp-eval.js
-test-flow*.js
-inspect-scene-mgr.js
+test-*.js
+inspect-*.js
 wait-and-check.js
+full-check.js
+reset-to-title.js
 .gh-login.log
 
 # Editor
