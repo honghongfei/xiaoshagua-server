@@ -90,13 +90,11 @@
       const spawn = getSpawnFromGame();
       DataManager.setupNewGame();
       $gameParty.setupStartingMembers();
-      $gamePlayer.reserveTransfer(
-        ch.mapId || spawn.mapId,
-        ch.x != null ? ch.x : spawn.x,
-        ch.y != null ? ch.y : spawn.y,
-        ch.d || 2,
-        0,
-      );
+      const useChMap = ch.mapId && ch.mapId !== 1 && DataManager.isMapLoaded ? ch.mapId : 0;
+      const targetMap = useChMap || spawn.mapId;
+      const targetX = useChMap ? (ch.x != null ? ch.x : spawn.x) : spawn.x;
+      const targetY = useChMap ? (ch.y != null ? ch.y : spawn.y) : spawn.y;
+      $gamePlayer.reserveTransfer(targetMap, targetX, targetY, ch.d || 2, 0);
       SceneManager.goto(Scene_Map);
     });
   };

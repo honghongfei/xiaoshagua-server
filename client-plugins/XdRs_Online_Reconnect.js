@@ -95,13 +95,11 @@
       const fbY = (sys && sys.startY != null) ? sys.startY : 6;
       DataManager.setupNewGame();
       $gameParty.setupStartingMembers();
-      $gamePlayer.reserveTransfer(
-        ch.mapId || fbMap,
-        ch.x != null ? ch.x : fbX,
-        ch.y != null ? ch.y : fbY,
-        ch.d || 2,
-        0,
-      );
+      const useChMap = ch.mapId && ch.mapId !== 1 ? ch.mapId : 0;
+      const targetMap = useChMap || fbMap;
+      const targetX = useChMap ? (ch.x != null ? ch.x : fbX) : fbX;
+      const targetY = useChMap ? (ch.y != null ? ch.y : fbY) : fbY;
+      $gamePlayer.reserveTransfer(targetMap, targetX, targetY, ch.d || 2, 0);
       SceneManager.goto(Scene_Map);
     });
   };
