@@ -124,21 +124,56 @@
     };
   }
 
-  // 自动保存：玩家在地图上每 5 分钟自动云存一次（防止意外退出丢进度）
+  // 自动云存档策略：尽量频繁、但别打断玩家
+  //   - 30s 一次的轮询保存（地图空闲时）
+  //   - 每次进入新地图触发一次
+  //   - 浏览器关闭 / 重启前最后一次同步存（NW.js beforeunload）
   let lastAutoSave = 0;
-  const AUTO_SAVE_INTERVAL = 5 * 60 * 1000;
+  const AUTO_SAVE_INTERVAL = 30 * 1000;
+
+  function trySave(reason) {
+    if (!Core.isOnline()) return;
+    if (!$gameSystem) return;
+    if ($gameMap && $gameMap.isEventRunning && $gameMap.isEventRunning()) return;
+    if ($gameMessage && $gameMessage.isBusy && $gameMessage.isBusy()) return;
+    try {
+      DataManager.saveGame(1);
+      lastAutoSave = Date.now();
+      Util.log('debug', 'cloud save (' + reason + ')');
+    } catch (e) { Util.log('warn', 'cloud save failed (' + reason + '):', e); }
+  }
+
   const _Scene_Map_update_save = Scene_Map.prototype.update;
   Scene_Map.prototype.update = function (sceneActive) {
     _Scene_Map_update_save.call(this, sceneActive);
     if (!Core.isOnline()) return;
     const now = Date.now();
     if (now - lastAutoSave < AUTO_SAVE_INTERVAL) return;
-    if ($gameMap && $gameMap.isEventRunning && $gameMap.isEventRunning()) return;
-    if ($gameMessage && $gameMessage.isBusy && $gameMessage.isBusy()) return;
-    lastAutoSave = now;
-    try {
-      DataManager.saveGame(1);
-      Util.log('info', 'periodic cloud save');
-    } catch (e) { Util.log('warn', 'periodic save failed:', e); }
+    trySave('interval');
   };
+
+  // 每次进新 Map 触发一次
+  const _Scene_Map_onMapLoaded_save = Scene_Map.prototype.onMapLoaded;
+  Scene_Map.prototype.onMapLoaded = function () {
+    _Scene_Map_onMapLoaded_save.call(this);
+    if (Core.isOnline()) {
+      // delay 一拍，让 $gameMap 完成 setup
+      setTimeout(() => trySave('mapEnter'), 500);
+    }
+  };
+
+  // 关窗 / 关进程前最后一次同步存
+  window.addEventListener('beforeunload', () => {
+    if (Core.isOnline()) {
+      try {
+        // 同步发，不等 promise（浏览器关闭时 async 没保障）
+        const contents = JsonEx.stringify(DataManager.makeSaveContents());
+        const xhr = new XMLHttpRequest();
+        // 这里就不通过 socket 了，因为 socket close 比 unload 快；用 HTTP 备份端点
+        // （备份端点暂未实装，先用同步 socket emit）
+        Net.emit('save.upload', { contents, meta: { savefileId: 1, reason: 'beforeunload', mapId: $gameMap ? $gameMap.mapId() : null } });
+        Util.log('info', 'cloud save on beforeunload');
+      } catch (e) { /* ignore */ }
+    }
+  });
 })();

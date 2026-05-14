@@ -24,7 +24,11 @@ function get(url) {
   });
 }
 
-const tabs = JSON.parse(await get('http://127.0.0.1:9222/json/list'));
+let tabs = JSON.parse(await get('http://127.0.0.1:9222/json/list'));
+if (!Array.isArray(tabs) || tabs.length === 0) {
+  // Older Chromium fallback
+  tabs = JSON.parse(await get('http://127.0.0.1:9222/json'));
+}
 const main = tabs.find((t) => t.type === 'page') || tabs[0];
 if (!main) { console.error('no debuggable page'); process.exit(1); }
 
