@@ -77,14 +77,21 @@
 
   function enterGameFromSession() {
     const ch = Core.session.character;
-    const spawn = getSpawnFromGame();
+    // 等价于「新游戏」流程：setupNewGame 会自己根据 $dataSystem.startMapId/X/Y 设置 reserveTransfer
     DataManager.setupNewGame();
     $gameParty.setupStartingMembers();
-    const useChMap = ch.mapId && ch.mapId !== 1 ? ch.mapId : 0;
-    const targetMap = useChMap || spawn.mapId;
-    const targetX = useChMap ? (ch.x != null ? ch.x : spawn.x) : spawn.x;
-    const targetY = useChMap ? (ch.y != null ? ch.y : spawn.y) : spawn.y;
-    $gamePlayer.reserveTransfer(targetMap, targetX, targetY, ch.d || 2, 0);
+    // 只有当服务端记录的位置看起来是真实「玩过」的位置（非默认 mapId=1）时才覆盖：
+    if (ch.mapId && ch.mapId !== 1) {
+      const fbX = (typeof $dataSystem !== 'undefined' && $dataSystem) ? $dataSystem.startX : 0;
+      const fbY = (typeof $dataSystem !== 'undefined' && $dataSystem) ? $dataSystem.startY : 0;
+      $gamePlayer.reserveTransfer(
+        ch.mapId,
+        ch.x != null ? ch.x : fbX,
+        ch.y != null ? ch.y : fbY,
+        ch.d || 2,
+        0,
+      );
+    }
     SceneManager.goto(Scene_Map);
   }
 
