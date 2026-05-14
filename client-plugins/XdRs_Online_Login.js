@@ -75,9 +75,33 @@
     };
   }
 
+  function enterGameFromSession() {
+    const ch = Core.session.character;
+    const spawn = getSpawnFromGame();
+    DataManager.setupNewGame();
+    $gameParty.setupStartingMembers();
+    const useChMap = ch.mapId && ch.mapId !== 1 ? ch.mapId : 0;
+    const targetMap = useChMap || spawn.mapId;
+    const targetX = useChMap ? (ch.x != null ? ch.x : spawn.x) : spawn.x;
+    const targetY = useChMap ? (ch.y != null ? ch.y : spawn.y) : spawn.y;
+    $gamePlayer.reserveTransfer(targetMap, targetX, targetY, ch.d || 2, 0);
+    SceneManager.goto(Scene_Map);
+  }
+
   Scene_Title.prototype.commandXsgOnline = function () {
     const scene = this;
     if (this._commandWindow) this._commandWindow.close();
+    // 已经被 Reconnect 自动 resume 过 → 跳过登录表，直接进游戏
+    if (Core.session && Core.session.character) {
+      const ch = Core.session.character;
+      if (window.confirm('已登录为 ' + (ch.name || ('#' + ch.pid)) + '，现在进入游戏？\n(取消则回到标题菜单)')) {
+        enterGameFromSession();
+      } else if (scene._commandWindow) {
+        scene._commandWindow.open();
+        scene._commandWindow.activate();
+      }
+      return;
+    }
     LoginOverlay.open((ok) => {
       if (!ok) {
         if (scene._commandWindow) {
@@ -86,16 +110,7 @@
         }
         return;
       }
-      const ch = Core.session.character;
-      const spawn = getSpawnFromGame();
-      DataManager.setupNewGame();
-      $gameParty.setupStartingMembers();
-      const useChMap = ch.mapId && ch.mapId !== 1 && DataManager.isMapLoaded ? ch.mapId : 0;
-      const targetMap = useChMap || spawn.mapId;
-      const targetX = useChMap ? (ch.x != null ? ch.x : spawn.x) : spawn.x;
-      const targetY = useChMap ? (ch.y != null ? ch.y : spawn.y) : spawn.y;
-      $gamePlayer.reserveTransfer(targetMap, targetX, targetY, ch.d || 2, 0);
-      SceneManager.goto(Scene_Map);
+      enterGameFromSession();
     });
   };
 

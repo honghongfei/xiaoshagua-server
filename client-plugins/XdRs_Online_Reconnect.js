@@ -80,6 +80,9 @@
     });
   };
 
+  // 仅恢复会话（token + character），不会替你按「联机」也不跳 Scene_Map。
+  // 这样你还能选「新游戏」走完原本的角色创建流程；
+  // 真要进游戏，按 M 或点右上「联机」即可，登录窗会识别已有 session 自动跳过密码。
   const _Scene_Title_create = Scene_Title.prototype.create;
   Scene_Title.prototype.create = function () {
     _Scene_Title_create.call(this);
@@ -88,19 +91,7 @@
     Re._tried = true;
     Re.tryResume().then((ok) => {
       if (!ok) return;
-      const ch = Core.session.character;
-      const sys = (typeof $dataSystem !== 'undefined' && $dataSystem) ? $dataSystem : null;
-      const fbMap = (sys && sys.startMapId) || 1;
-      const fbX = (sys && sys.startX != null) ? sys.startX : 8;
-      const fbY = (sys && sys.startY != null) ? sys.startY : 6;
-      DataManager.setupNewGame();
-      $gameParty.setupStartingMembers();
-      const useChMap = ch.mapId && ch.mapId !== 1 ? ch.mapId : 0;
-      const targetMap = useChMap || fbMap;
-      const targetX = useChMap ? (ch.x != null ? ch.x : fbX) : fbX;
-      const targetY = useChMap ? (ch.y != null ? ch.y : fbY) : fbY;
-      $gamePlayer.reserveTransfer(targetMap, targetX, targetY, ch.d || 2, 0);
-      SceneManager.goto(Scene_Map);
+      Util.log('info', 'auto-resume succeeded, session ready; click 联机/M to enter game');
     });
   };
 })();
