@@ -75,49 +75,11 @@
     };
   }
 
-  // 「联机」只在 Scene_Map 上有按钮 / 热键；Scene_Title 不显示。
-  // 原生 Window_TitleCommand 上仍保留这一 hook 仅为兼容（如果将来卸了 XdRs_Arder 用原生 RMMZ Title 时还能用）
-  Scene_Title.prototype.commandXsgOnline = function () {
-    if (this._commandWindow) {
-      this._commandWindow.close();
-      // 提示后回标题
-      alert('请先进入游戏，再在地图里按 M 启用联机。');
-      this._commandWindow.open();
-      this._commandWindow.activate();
-    }
-  };
-
-  // 在 Scene_Map 里点「联机」/ 按 M：根据当前状态做不同事
-  //   未登录 → 弹登录窗
-  //   登录但未连接 → 重连
-  //   已在线 → 弹确认是否退出
-  function activateOnlineOnMap() {
-    if (Core.isOnline()) {
-      const ch = Core.session.character;
-      if (window.confirm('当前已联机：' + (ch.name || ('#' + ch.pid)) + '\n点 确定 退出联机，点 取消 保留连接。')) {
-        Core.clearSession();
-        flash('已退出联机');
-      }
-      return;
-    }
-    if (Core.session && Core.session.character) {
-      Net.connect().then(() => {
-        if (G.PlayerSync && typeof G.PlayerSync.enterCurrentMap === 'function') {
-          G.PlayerSync.enterCurrentMap();
-        }
-        flash('联机已激活：' + Core.session.character.name);
-      }).catch((err) => alert('联机失败：' + (err && err.message)));
-      return;
-    }
-    LoginOverlay.open((ok) => {
-      if (!ok) return;
-      if (G.PlayerSync && typeof G.PlayerSync.enterCurrentMap === 'function') {
-        G.PlayerSync.enterCurrentMap();
-      }
-      flash('联机已激活：' + Core.session.character.name);
-    });
-  }
-
+  // 方案 1：联机即「云存档替代单人」
+  // - Title 上一个「联机」按钮 = 入口
+  // - 已有云存档：下载 → 应用 → 跳 Scene_Map（位置/任务/开关全恢复）
+  // - 无云存档：登录后走原生「新游戏」流程 → Scene_MakeActor → 进游戏后第一次保存自动上传云端
+  // - 已在线时按钮变「退出联机」，点了清 session
   function flash(text) {
     if (typeof $gameTemp !== 'undefined' && $gameTemp && typeof $gameTemp.addWorldMessage === 'function') {
       $gameTemp.addWorldMessage('\\c[10][系统]\\c[0] ' + text, true);
@@ -126,16 +88,84 @@
     }
   }
 
-  // ---- 「联机」按钮只在 Scene_Map 显示。Scene_Title 上不显示也不能按。----
-  const _Scene_Map_start_login = Scene_Map.prototype.start;
-  Scene_Map.prototype.start = function () {
-    _Scene_Map_start_login.call(this);
+  function downloadAndEnter() {
+    return Net.request('save.download', {}, 12000).then((res) => {
+      if (!res || !res.found || !res.blob) return false;
+      try {
+        const contents = JsonEx.parse(res.blob.contents);
+        DataManager.createGameObjects();
+        DataManager.extractSaveContents(contents);
+        DataManager.correctDataErrors();
+        if (G.PlayerSync && typeof G.PlayerSync.enterCurrentMap === 'function') {
+          // 进了 Scene_Map.start 自然会调一次 enterMap
+        }
+        SceneManager.goto(Scene_Map);
+        return true;
+      } catch (e) {
+        console.error('[XSG-Online] cloud save parse failed', e);
+        return false;
+      }
+    });
+  }
+
+  function startFreshNewGame() {
+    // 走游戏自定义的「新游戏」流程：到 Scene_MakeActor 创角，结束后进 Scene_Map
+    DataManager.setupNewGame();
+    if (typeof Scene_MakeActor !== 'undefined') {
+      SceneManager.push(Scene_MakeActor);
+    } else {
+      SceneManager.goto(Scene_Map);
+    }
+  }
+
+  function afterLogin() {
+    flash('登录成功：' + (Core.session.character.name || ('#' + Core.session.character.pid)));
+    Net.request('save.exists', {}, 6000).then((r) => {
+      if (r && r.exists) {
+        downloadAndEnter().then((ok) => {
+          if (!ok) startFreshNewGame();
+        });
+      } else {
+        startFreshNewGame();
+      }
+    }).catch(() => startFreshNewGame());
+  }
+
+  Scene_Title.prototype.commandXsgOnline = function () {
+    const scene = this;
+    if (this._commandWindow) this._commandWindow.close();
+    if (Core.isOnline()) {
+      if (window.confirm('当前已联机为 ' + (Core.session.character.name || '?') + '\n确定 = 退出联机；取消 = 保留')) {
+        Core.clearSession();
+        flash('已退出联机');
+      }
+      if (scene._commandWindow) { scene._commandWindow.open(); scene._commandWindow.activate(); }
+      return;
+    }
+    if (Core.session && Core.session.character) {
+      // 已 resume，直接下云存档进游戏
+      Net.connect().then(afterLogin).catch((err) => alert('连服失败：' + (err && err.message)));
+      return;
+    }
+    LoginOverlay.open((ok) => {
+      if (!ok) {
+        if (scene._commandWindow) { scene._commandWindow.open(); scene._commandWindow.activate(); }
+        return;
+      }
+      afterLogin();
+    });
+  };
+
+  // ---- 「联机」按钮在 Scene_Title 显示。Scene_Map 上不再显示。----
+  const _Scene_Title_start = Scene_Title.prototype.start;
+  Scene_Title.prototype.start = function () {
+    _Scene_Title_start.call(this);
     OnlineEntry.show();
   };
-  const _Scene_Map_terminate_login = Scene_Map.prototype.terminate;
-  Scene_Map.prototype.terminate = function () {
+  const _Scene_Title_terminate = Scene_Title.prototype.terminate;
+  Scene_Title.prototype.terminate = function () {
     OnlineEntry.hide();
-    if (_Scene_Map_terminate_login) _Scene_Map_terminate_login.call(this);
+    if (_Scene_Title_terminate) _Scene_Title_terminate.call(this);
   };
 
   const OnlineEntry = {};
@@ -205,7 +235,7 @@
   function bindKey() {
     keyBound = true;
     document.addEventListener('keydown', (e) => {
-      if (!(SceneManager._scene instanceof Scene_Map)) return;
+      if (!(SceneManager._scene instanceof Scene_Title)) return;
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
       if (e.key === 'm' || e.key === 'M') {
         e.preventDefault();
@@ -215,8 +245,8 @@
   }
 
   function trigger() {
-    if (SceneManager._scene instanceof Scene_Map) {
-      activateOnlineOnMap();
+    if (SceneManager._scene instanceof Scene_Title) {
+      SceneManager._scene.commandXsgOnline();
     }
   }
 
