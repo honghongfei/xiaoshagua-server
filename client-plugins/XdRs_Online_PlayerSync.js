@@ -173,6 +173,9 @@
 
   function addOther(view) {
     if (!view || view.pid == null) return;
+    // 不要把自己的 ghost 也加到 others, 不然画面上会和 $gamePlayer 叠一份
+    const myPid = Core.session && Core.session.character ? Core.session.character.pid : null;
+    if (myPid != null && view.pid === myPid) return;
     ensureOtherPlayerClass();
     const ss = currentSpriteset();
     if (!ss) return;
