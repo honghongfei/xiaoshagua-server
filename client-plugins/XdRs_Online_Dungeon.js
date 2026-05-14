@@ -62,9 +62,10 @@
     Net.request('dungeon.enter', { dungeonId: cfg.dungeonId, partyIds: [] })
       .then((res) => {
         Dungeon.current = res;
-        // Transfer to base map; server-side instance id is in Dungeon.current
+        // \u4f20\u9001\u5230 baseMap (\u8d44\u6e90\u7aef\u7528 baseMap), \u540c\u65f6\u540e\u7eed PlayerSync.enterCurrentMap
+        // \u4f1a\u62a5 virtualMapId \u8ba9 server \u6309\u5b9e\u4f8b\u8def\u7531 (H2 \u4fee)
         $gamePlayer.reserveTransfer(res.baseMapId, res.spawn.x, res.spawn.y, res.spawn.d, 0);
-        Util.log('info', 'dungeon enter ok inst=' + res.instanceId);
+        Util.log('info', 'dungeon enter ok inst=' + res.instanceId + ' virt=' + res.virtualMapId);
       })
       .catch((err) => {
         Util.log('warn', 'dungeon.enter failed:', err && err.message);
@@ -72,9 +73,14 @@
   }
 
   function leaveCurrent() {
-    Net.request('dungeon.leave', {}).finally(() => {
-      Dungeon.current = null;
-    });
+    // M12 \u4fee\uff1a\u53ea\u6709\u670d\u7aef\u786e\u8ba4\u5df2\u51fa\u672c\u540e\u624d\u6e05\u672c\u5730\u3001\u5931\u8d25\u4e0d\u6e05 (\u514d\u4e8e\u672c\u5730\u4ee5\u4e3a\u51fa\u672c\u3001\u670d\u7aef\u4ecd\u8ba4\u4e3a\u5728\u672c)
+    Net.request('dungeon.leave', {}, 5000)
+      .then(() => {
+        Dungeon.current = null;
+      })
+      .catch((err) => {
+        Util.log('warn', 'dungeon.leave failed (\u672c\u5730\u72b6\u6001\u4fdd\u7559):', err && err.message);
+      });
   }
 
   // Hook Game_Player update to check region after movement

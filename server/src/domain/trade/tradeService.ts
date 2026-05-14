@@ -72,7 +72,13 @@ export function respond(tradeId: string, pid: number, accept: boolean): void {
 function notifyOpened(t: Trade): void {
   const ap = getOnlineByPid(t.a.pid);
   const bp = getOnlineByPid(t.b.pid);
-  if (!io || !ap || !bp) return;
+  // M4 修：如果任一端离线 / io 不可用, 不要静默 return 让交易进 zombie state。
+  //         状态回滚 + 清理映射 + 通知能找到的那边。
+  if (!io || !ap || !bp) {
+    t.state = 'cancelled';
+    end(t, ap ? 'peer_offline' : 'self_offline');
+    return;
+  }
   io.to(ap.socketId).emit('trade.opened.evt', { tradeId: t.id, peer: { pid: bp.pid, name: bp.name } });
   io.to(bp.socketId).emit('trade.opened.evt', { tradeId: t.id, peer: { pid: ap.pid, name: ap.name } });
 }

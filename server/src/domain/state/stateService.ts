@@ -1,6 +1,7 @@
 import type { Server } from 'socket.io';
 import { openDb } from '../../db/sqlite.js';
 import { log } from '../../log.js';
+import { AppError } from '../../util/errors.js';
 
 interface SwitchRow { id: number; value: number; updated_at: number; }
 interface VarRow { id: number; value: number; updated_at: number; }
@@ -8,6 +9,34 @@ interface VarRow { id: number; value: number; updated_at: number; }
 let io: Server | null = null;
 export function attachStateIo(server: Server): void {
   io = server;
+}
+
+// H6 修：共享状态白名单。
+// 默认空 set = 拒绝所有写入 (生产环境必须显式列出共享 id);
+// 通过 .env 的 SHARED_SWITCH_IDS / SHARED_VARIABLE_IDS 配置。
+function parseIdList(s: string | undefined): Set<number> {
+  const out = new Set<number>();
+  if (!s) return out;
+  for (const part of s.split(',')) {
+    const v = Number(part.trim());
+    if (Number.isInteger(v) && v > 0) out.add(v);
+  }
+  return out;
+}
+const allowedSwitches = parseIdList(process.env.SHARED_SWITCH_IDS);
+const allowedVariables = parseIdList(process.env.SHARED_VARIABLE_IDS);
+log.info({ allowedSwitches: Array.from(allowedSwitches), allowedVariables: Array.from(allowedVariables) }, 'state allowlist loaded');
+
+export function assertSwitchAllowed(id: number): void {
+  if (!allowedSwitches.has(id)) {
+    throw new AppError('FORBIDDEN', `switch id ${id} not in shared allowlist`);
+  }
+}
+
+export function assertVariableAllowed(id: number): void {
+  if (!allowedVariables.has(id)) {
+    throw new AppError('FORBIDDEN', `variable id ${id} not in shared allowlist`);
+  }
 }
 
 // In-memory cache of shared state; loaded once on first read.

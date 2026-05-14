@@ -73,6 +73,8 @@ export function enterMap(
   const socket = io?.sockets.sockets.get(player.socketId);
   if (socket) {
     socket.join(room(mapId));
+    // M7 修：每个 socket 进入 'world' room, 让 chatService 的世界频道单次 emit
+    socket.join('world');
   }
 
   return {

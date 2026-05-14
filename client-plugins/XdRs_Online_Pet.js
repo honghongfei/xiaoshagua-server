@@ -117,6 +117,9 @@
     }
     body.innerHTML = Pet.cache.map((p) => {
       const cooling = p.coolUntil > Date.now();
+      // L 修：进化按等级门槛禁用 (服端: stage0=>10, stage1=>25, stage2=>40)
+      const evolveLevelGate = p.stage === 0 ? 10 : p.stage === 1 ? 25 : p.stage === 2 ? 40 : 9999;
+      const evolveDisabled = cooling || p.level < evolveLevelGate || p.stage >= 3;
       const btnStyle = (color, disabled) => `background:${color};color:#fff;border:0;border-radius:3px;padding:2px 6px;font-size:11px;cursor:${disabled ? 'default' : 'pointer'};opacity:${disabled ? '0.5' : '1'}`;
       return `
         <div style="padding:4px 0;border-bottom:1px solid #333">
@@ -125,7 +128,7 @@
           <div style="margin-top:2px">
             <button data-pid="${p.id}" data-action="feed"  ${cooling ? 'disabled' : ''} style="${btnStyle('#3a82ff', cooling)}">喂养</button>
             <button data-pid="${p.id}" data-action="train" ${cooling ? 'disabled' : ''} style="${btnStyle('#2c9c4a', cooling)}">训练</button>
-            <button data-pid="${p.id}" data-action="evolve" style="${btnStyle('#a0790f', false)};margin-left:4px">进化</button>
+            <button data-pid="${p.id}" data-action="evolve" ${evolveDisabled ? 'disabled' : ''} title="${evolveDisabled ? '需达到 lv' + evolveLevelGate : ''}" style="${btnStyle('#a0790f', evolveDisabled)};margin-left:4px">进化</button>
           </div>
         </div>
       `;

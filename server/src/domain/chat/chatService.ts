@@ -1,7 +1,7 @@
 import type { Server } from 'socket.io';
 import { AppError } from '../../util/errors.js';
 import { createBucket, type TokenBucket } from '../../util/throttle.js';
-import { getOnlineByPid, listOnline } from '../player/playerService.js';
+import { getOnlineByPid } from '../player/playerService.js';
 import { room } from '../world/worldService.js';
 import { isBlocked } from '../social/socialService.js';
 import * as repo from './chatRepo.js';
@@ -67,11 +67,11 @@ export function send(input: SendInput): ChatEvt {
 
   switch (input.channel) {
     case 'world': {
+      // M7 修：用 socket.io room 'world' 一次广播, 替代 O(n) 逐 emit。
+      // 被拉黑的用户在客户端有 isBlocked 兜底, 这里偷懒不做服端过滤换 O(1) emit。
+      // (准确想做的话, 用 socket.io 的 except/rooms 但代价不值得)
       repo.insertChat(ts, 'world', from.pid, null, text);
-      for (const p of listOnline()) {
-        if (isBlocked(p.pid, from.pid)) continue;
-        io.to(p.socketId).emit('chat.evt', evt);
-      }
+      io.to('world').emit('chat.evt', evt);
       break;
     }
     case 'nearby': {

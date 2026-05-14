@@ -63,6 +63,8 @@ import {
   useItem as invUseItem,
 } from '../domain/inventory/inventoryService.js';
 import {
+  assertSwitchAllowed,
+  assertVariableAllowed,
   attachStateIo,
   setSharedSwitch,
   setSharedVariable,
@@ -211,8 +213,11 @@ export function installRouter(io: Server): void {
         //   3. 其他客户端的 world.delta / others snapshot 就能拿到正确贴图
         const effectiveCharSet = input.charSet ?? character.charSet;
         const effectiveCharIndex = input.charIndex ?? character.charIndex;
-        if (input.charSet != null && input.charSet !== character.charSet) {
-          updateCharacterAppearance(session.pid, input.charSet, input.charIndex ?? character.charIndex);
+        // charSet 或 charIndex 任一变化都要写库 (M11 修)
+        const charSetChanged = input.charSet != null && input.charSet !== character.charSet;
+        const charIndexChanged = input.charIndex != null && input.charIndex !== character.charIndex;
+        if ((charSetChanged || charIndexChanged) && effectiveCharSet != null) {
+          updateCharacterAppearance(session.pid, effectiveCharSet, effectiveCharIndex ?? 0);
         }
         markOnline({
           pid: session.pid,
@@ -294,6 +299,7 @@ export function installRouter(io: Server): void {
     socket.on('social.list', (_raw, ack) => {
       const cb = safeAck(ack);
       try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests'); // M8 修
         const session = socket.session;
         if (!session.authed || session.pid === null) throw new AppError('NO_AUTH', 'login required');
         cb?.(okAck({ friends: listFriends(session.pid), blocks: listBlocks(session.pid) }));
@@ -414,6 +420,7 @@ export function installRouter(io: Server): void {
         if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
         requireAuth(socket);
         const input = parse(StateSetSwitch, raw);
+        assertSwitchAllowed(input.id);
         const changed = setSharedSwitch(input.id, input.value);
         cb?.(okAck({ changed }));
       } catch (err) { sendError(socket, cb, err); }
@@ -425,6 +432,7 @@ export function installRouter(io: Server): void {
         if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
         requireAuth(socket);
         const input = parse(StateSetVar, raw);
+        assertVariableAllowed(input.id);
         const changed = setSharedVariable(input.id, input.value);
         cb?.(okAck({ changed }));
       } catch (err) { sendError(socket, cb, err); }
@@ -454,6 +462,7 @@ export function installRouter(io: Server): void {
     socket.on('save.exists', (_raw, ack) => {
       const cb = safeAck(ack);
       try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests'); // M8 修
         const s = requireAuth(socket);
         cb?.(okAck({ exists: hasSave(s.pid) }));
       } catch (err) { sendError(socket, cb, err); }
@@ -540,6 +549,7 @@ export function installRouter(io: Server): void {
     socket.on('pet.list', (_raw, ack) => {
       const cb = safeAck(ack);
       try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests'); // M8 修
         const s = requireAuth(socket);
         cb?.(okAck({ pets: petList(s.pid) }));
       } catch (err) { sendError(socket, cb, err); }

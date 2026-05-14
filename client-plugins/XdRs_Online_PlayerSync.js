@@ -138,7 +138,13 @@
   Sync.enterCurrentMap = enterCurrentMap;
   function enterCurrentMap() {
     ensureOtherPlayerClass();
-    const mapId = $gameMap.mapId();
+    // H2 修：副本中要上报服端分配的 virtualMapId, 让 worldService 按实例路由广播
+    // 不在副本时, 用 RMMZ 真实 $gameMap.mapId()
+    const G2 = window.XdRsOnline;
+    let mapId = $gameMap.mapId();
+    if (G2.Dungeon && G2.Dungeon.current && typeof G2.Dungeon.current.virtualMapId === 'number') {
+      mapId = G2.Dungeon.current.virtualMapId;
+    }
     const x = $gamePlayer.x | 0;
     const y = $gamePlayer.y | 0;
     const d = $gamePlayer.direction();
@@ -157,7 +163,7 @@
     }
     Net.request('player.enterMap', payload)
       .then((snap) => {
-        Util.log('info', 'enterMap ok others=' + ((snap && snap.others) ? snap.others.length : 0));
+        Util.log('info', 'enterMap ok mapId=' + mapId + ' others=' + ((snap && snap.others) ? snap.others.length : 0));
         clearAllOthers();
         if (snap && snap.others) snap.others.forEach(addOther);
         lastSent = { x, y, d };
@@ -334,16 +340,33 @@
   }
 
   function doFriend(pid, name) {
-    Net.request('friend.add', { targetPid: pid }, 5000)
-      .then(() => alert('已发送好友请求给 ' + name))
-      .catch((err) => alert(err && err.message || '加好友失败'));
+    // 服端是 social.add { pid, kind: 'friend' | 'block' }, 不是 friend.add
+    Net.request('social.add', { pid, kind: 'friend' }, 5000)
+      .then(() => {
+        flashSys('已向 ' + name + ' 发送好友请求');
+        const G = window.XdRsOnline;
+        if (G.Friend && typeof G.Friend.refresh === 'function') G.Friend.refresh();
+      })
+      .catch((err) => flashSys('加好友失败: ' + (err && err.message || '?')));
   }
 
   function doBlock(pid, name) {
     if (!window.confirm('拉黑 ' + name + '？拉黑后将看不到他的聊天')) return;
-    Net.request('social.block', { targetPid: pid }, 5000)
-      .then(() => alert('已拉黑 ' + name))
-      .catch((err) => alert(err && err.message || '拉黑失败'));
+    Net.request('social.add', { pid, kind: 'block' }, 5000)
+      .then(() => {
+        flashSys('已拉黑 ' + name);
+        const G = window.XdRsOnline;
+        if (G.Friend && typeof G.Friend.refresh === 'function') G.Friend.refresh();
+      })
+      .catch((err) => flashSys('拉黑失败: ' + (err && err.message || '?')));
+  }
+
+  function flashSys(text) {
+    if (typeof $gameTemp !== 'undefined' && $gameTemp && typeof $gameTemp.addWorldMessage === 'function') {
+      $gameTemp.addWorldMessage('\\c[10][系统]\\c[0] ' + text, true);
+    } else {
+      console.log('[XSG-Online] ' + text);
+    }
   }
 
   const _Scene_Map_update = Scene_Map.prototype.update;

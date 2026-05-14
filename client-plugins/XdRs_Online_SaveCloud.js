@@ -27,37 +27,33 @@
 
   const Cloud = (G.SaveCloud = G.SaveCloud || {});
 
-  function decompress(b64) {
-    try {
-      const bin = atob(b64);
-      const arr = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-      return arr;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  // ---------- Hook saveGame ----------
+  // ---------- Hook saveGame (H3 修：返回值与服端 ack 真正一致) ----------
   const _DM_saveGame = DataManager.saveGame;
   DataManager.saveGame = function (savefileId) {
     if (!Core.isOnline()) return _DM_saveGame.call(this, savefileId);
+    let contents;
+    let meta;
     try {
-      const contents = JsonEx.stringify(this.makeSaveContents());
-      const meta = {
+      contents = JsonEx.stringify(this.makeSaveContents());
+      meta = {
         savefileId,
         mapId: $gameMap ? $gameMap.mapId() : null,
         partyName: $gameParty && $gameParty.leader() ? $gameParty.leader().name() : '',
         playtime: $gameSystem && $gameSystem.playtimeText ? $gameSystem.playtimeText() : '',
       };
-      Net.request('save.upload', { contents, meta }, 12000)
-        .then((res) => Util.log('info', 'cloud save uploaded ts=' + res.ts))
-        .catch((err) => Util.log('warn', 'cloud save failed:', err && err.message));
-      return Promise.resolve(true);
     } catch (e) {
-      Util.log('error', 'cloud save threw:', e);
+      Util.log('error', 'cloud save serialize threw:', e);
       return Promise.resolve(false);
     }
+    return Net.request('save.upload', { contents, meta }, 12000)
+      .then((res) => {
+        Util.log('info', 'cloud save uploaded ts=' + res.ts);
+        return true;
+      })
+      .catch((err) => {
+        Util.log('warn', 'cloud save failed:', err && err.message);
+        return false;
+      });
   };
 
   // ---------- Hook loadGame ----------
@@ -162,18 +158,33 @@
     }
   };
 
-  // 关窗 / 关进程前最后一次同步存
+  // H4 修：关窗 / 关进程前最后一次同步存
+  //   1. 优先用 navigator.sendBeacon (浏览器保证 unload 时把请求送出去)
+  //   2. 服端新增 POST /save (token 鉴权) 接收 beacon
+  //   3. 兜底：sendBeacon 不可用 / 太大时降级到 socket emit
   window.addEventListener('beforeunload', () => {
-    if (Core.isOnline()) {
-      try {
-        // 同步发，不等 promise（浏览器关闭时 async 没保障）
-        const contents = JsonEx.stringify(DataManager.makeSaveContents());
-        const xhr = new XMLHttpRequest();
-        // 这里就不通过 socket 了，因为 socket close 比 unload 快；用 HTTP 备份端点
-        // （备份端点暂未实装，先用同步 socket emit）
-        Net.emit('save.upload', { contents, meta: { savefileId: 1, reason: 'beforeunload', mapId: $gameMap ? $gameMap.mapId() : null } });
-        Util.log('info', 'cloud save on beforeunload');
-      } catch (e) { /* ignore */ }
-    }
+    if (!Core.isOnline()) return;
+    if (!Core.session || !Core.session.token) return;
+    try {
+      const contents = JsonEx.stringify(DataManager.makeSaveContents());
+      const payload = JSON.stringify({
+        token: Core.session.token,
+        contents,
+        meta: { savefileId: 1, reason: 'beforeunload', mapId: $gameMap ? $gameMap.mapId() : null },
+      });
+      const wsUrl = Net.config.url;
+      const httpUrl = wsUrl.replace(/^ws:/i, 'http:').replace(/^wss:/i, 'https:') + '/save';
+      let sent = false;
+      if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+        try {
+          const blob = new Blob([payload], { type: 'application/json' });
+          sent = navigator.sendBeacon(httpUrl, blob);
+        } catch (e) { /* ignore */ }
+      }
+      if (!sent) {
+        Net.emit('save.upload', { contents, meta: { savefileId: 1, reason: 'beforeunload-fallback', mapId: $gameMap ? $gameMap.mapId() : null } });
+      }
+      Util.log('info', 'cloud save on beforeunload (beacon=' + sent + ')');
+    } catch (e) { /* ignore */ }
   });
 })();

@@ -42,28 +42,63 @@
     return null;
   }
 
-  function applyServerDelta(deltaApplied, requested, label) {
-    if (!strict) return;
-    if (deltaApplied !== requested) {
-      Util.log('warn', label + ' server clamped: req=' + requested + ' applied=' + deltaApplied);
+  // H5 修：服端返回 appliedDelta + newTotal 后，把本地校准到 newTotal (不止 strict)
+  function adjustLocalAfterRpc(kind, dataIdOrZero, requestedDelta, res, label) {
+    if (!res) return;
+    const applied = typeof res.appliedDelta === 'number' ? res.appliedDelta : requestedDelta;
+    const newTotal = typeof res.newTotal === 'number' ? res.newTotal : null;
+    if (kind === 'gold') {
+      if (newTotal != null && typeof $gameParty._gold === 'number') {
+        const before = $gameParty._gold;
+        if (before !== newTotal) {
+          withSuppressSync(() => { $gameParty._gold = newTotal | 0; });
+          Util.log('debug', 'gold corrected local ' + before + ' -> ' + newTotal + ' (req=' + requestedDelta + ' applied=' + applied + ')');
+        }
+      }
+    } else {
+      const bucket = kind === 'item' ? $gameParty._items : kind === 'weapon' ? $gameParty._weapons : $gameParty._armors;
+      if (bucket && newTotal != null) {
+        withSuppressSync(() => { bucket[dataIdOrZero] = newTotal | 0; });
+      }
+    }
+    if (strict && applied !== requestedDelta) {
+      Util.log('warn', label + ' server clamped: req=' + requestedDelta + ' applied=' + applied);
       if (typeof $gameMessage !== 'undefined') {
-        $gameMessage.add('服务端裁剪了 ' + label + '：申请 ' + requested + '，实得 ' + deltaApplied);
+        $gameMessage.add('服务端裁剪了 ' + label + '：申请 ' + requestedDelta + '，实得 ' + applied);
       }
     }
   }
 
-  // ---------- Hook gainGold ----------
+  // H5 修：RPC 失败的本地回滚 (因为我们是 _gainGold 先调本地的 optimistic 模式)
+  function rollbackLocalGold(amount) {
+    if (typeof $gameParty._gold !== 'number') return;
+    withSuppressSync(() => { $gameParty._gold = Math.max(0, ($gameParty._gold | 0) - (amount | 0)); });
+  }
+  function rollbackLocalItem(kind, dataId, amount) {
+    const bucket = kind === 'item' ? $gameParty._items : kind === 'weapon' ? $gameParty._weapons : $gameParty._armors;
+    if (!bucket) return;
+    withSuppressSync(() => { bucket[dataId] = Math.max(0, (bucket[dataId] | 0) - (amount | 0)); });
+  }
+
+  // ---------- Hook gainGold (H5 + M1 + M2 修) ----------
   const _gainGold = Game_Party.prototype.gainGold;
   Game_Party.prototype.gainGold = function (amount) {
     _gainGold.call(this, amount);
     if (suppressSync) return;
     if (!Core.isOnline() || amount === 0) return;
-    Net.request('inventory.gainGold', { amount: amount | 0, reason: 'gainGold' }, 6000)
-      .then((res) => applyServerDelta(res.appliedDelta, amount | 0, '金币'))
-      .catch((err) => Util.log('warn', 'gainGold sync failed:', err && err.message));
+    const requested = amount | 0;
+    Net.request('inventory.gainGold', { amount: requested, reason: requested >= 0 ? 'gainGold' : 'loseGold' }, 6000)
+      .then((res) => adjustLocalAfterRpc('gold', 0, requested, res, '金币'))
+      .catch((err) => {
+        Util.log('warn', 'gainGold sync failed, rollback:', err && err.message);
+        rollbackLocalGold(requested);
+        // 同时再去 reconcile, 防止部分写入
+        Net.request('inventory.snapshot', {}, 4000).then((snap) => reconcileLocal(snap)).catch(() => {});
+      });
   };
 
-  // ---------- Hook gainItem ----------
+  // ---------- Hook gainItem (H5 + M1 + M2 修) ----------
+  // M2: gainItem 也接管负数 (loseItem 在 RMMZ 里调 gainItem(-n))
   const _gainItem = Game_Party.prototype.gainItem;
   Game_Party.prototype.gainItem = function (item, amount, includeEquip) {
     _gainItem.call(this, item, amount, includeEquip);
@@ -71,14 +106,19 @@
     if (!Core.isOnline() || !item || amount === 0) return;
     const kind = itemKind(item);
     if (!kind) return;
+    const requested = amount | 0;
     Net.request('inventory.gainItem', {
       kind,
       dataId: item.id,
-      amount: amount | 0,
-      reason: 'gainItem',
+      amount: requested,
+      reason: requested >= 0 ? 'gainItem' : 'loseItem',
     }, 6000)
-      .then((res) => applyServerDelta(res.appliedDelta, amount | 0, item.name || kind))
-      .catch((err) => Util.log('warn', 'gainItem sync failed:', err && err.message));
+      .then((res) => adjustLocalAfterRpc(kind, item.id, requested, res, item.name || kind))
+      .catch((err) => {
+        Util.log('warn', 'gainItem sync failed, rollback:', err && err.message);
+        rollbackLocalItem(kind, item.id, requested);
+        Net.request('inventory.snapshot', {}, 4000).then((snap) => reconcileLocal(snap)).catch(() => {});
+      });
   };
 
   // ---------- snapshot on enter map (+ reconcile local with server) ----------
@@ -123,19 +163,32 @@
     Net.request('inventory.snapshot', {}, 6000)
       .then((snap) => {
         Inv.snapshot = snap;
-        Util.log('debug', 'inventory snapshot: gold=' + snap.gold + ' items=' + snap.items.length);
+        const itemsLen = Array.isArray(snap && snap.items) ? snap.items.length : 0; // M5 修：防御异常 payload
+        Util.log('debug', 'inventory snapshot: gold=' + (snap && snap.gold) + ' items=' + itemsLen);
         reconcileLocal(snap);
       })
       .catch((err) => Util.log('warn', 'inventory snapshot failed:', err && err.message));
   };
 
-  // ---------- Listen to push events ----------
+  // ---------- Listen to push events (M3 修) ----------
+  // 服端某些路径会主动推 inventory.delta (例如交易完成)
+  // 之前只 log 不应用, 现在应用到 $gameParty 并保护 suppressSync 不反弹
   Net.on('inventory.delta', (d) => {
     if (!d) return;
-    if (d.gold != null) Util.log('debug', 'server gold delta:', d.gold);
-    if (d.items) {
+    if (typeof d.gold === 'number' && typeof $gameParty._gold === 'number') {
+      withSuppressSync(() => { $gameParty._gold = Math.max(0, ($gameParty._gold | 0) + (d.gold | 0)); });
+      Util.log('debug', 'apply server gold delta:', d.gold);
+    }
+    if (Array.isArray(d.items)) {
       for (const it of d.items) {
-        Util.log('debug', 'server item delta:', it.kind, '#' + it.dataId, 'd=' + it.deltaCount);
+        if (!it || !it.kind) continue;
+        const bucket = it.kind === 'item' ? $gameParty._items : it.kind === 'weapon' ? $gameParty._weapons : it.kind === 'armor' ? $gameParty._armors : null;
+        if (!bucket) continue;
+        if (typeof it.newCount === 'number') {
+          withSuppressSync(() => { bucket[it.dataId] = Math.max(0, it.newCount | 0); });
+        } else if (typeof it.deltaCount === 'number') {
+          withSuppressSync(() => { bucket[it.dataId] = Math.max(0, (bucket[it.dataId] | 0) + (it.deltaCount | 0)); });
+        }
       }
     }
   });
