@@ -77,10 +77,10 @@
 
   function enterGameFromSession() {
     const ch = Core.session.character;
-    // 等价于「新游戏」流程：setupNewGame 会自己根据 $dataSystem.startMapId/X/Y 设置 reserveTransfer
     DataManager.setupNewGame();
     $gameParty.setupStartingMembers();
-    // 只有当服务端记录的位置看起来是真实「玩过」的位置（非默认 mapId=1）时才覆盖：
+    // 标志：进 Scene_Map 后需要解锁
+    G._needsUnlockOnMap = true;
     if (ch.mapId && ch.mapId !== 1) {
       const fbX = (typeof $dataSystem !== 'undefined' && $dataSystem) ? $dataSystem.startX : 0;
       const fbY = (typeof $dataSystem !== 'undefined' && $dataSystem) ? $dataSystem.startY : 0;
@@ -94,6 +94,26 @@
     }
     SceneManager.goto(Scene_Map);
   }
+
+  // Scene_Map 起来后，如果是「联机进场」，把可能由 setupNewGame 引发的
+  // 起点地图自动事件残留（forced move route）清掉，否则玩家在另一张地图上动不了
+  const _Scene_Map_onMapLoaded_login = Scene_Map.prototype.onMapLoaded;
+  Scene_Map.prototype.onMapLoaded = function () {
+    _Scene_Map_onMapLoaded_login.call(this);
+    if (G._needsUnlockOnMap) {
+      G._needsUnlockOnMap = false;
+      try {
+        if ($gamePlayer.isMoveRouteForcing()) {
+          $gamePlayer._moveRouteForcing = false;
+          $gamePlayer._moveRoute = null;
+          $gamePlayer._moveRouteIndex = 0;
+          $gamePlayer._waitCount = 0;
+          $gamePlayer._originalMoveRoute = null;
+          if (Util && Util.log) Util.log('info', 'cleared stale forced move route after online enter');
+        }
+      } catch (e) { /* ignore */ }
+    }
+  };
 
   Scene_Title.prototype.commandXsgOnline = function () {
     const scene = this;
