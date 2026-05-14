@@ -45,7 +45,7 @@ https://cdn.socket.io/4.8.0/socket.io.min.js
 ```js
 {"name":"vendor/socket.io.min","status":true,"description":"vendor: socket.io-client v4","parameters":{}},
 {"name":"XdRs_Online_Util","status":true,"description":"联机-工具 (XSG-Online)","parameters":{}},
-{"name":"XdRs_Online_Net","status":true,"description":"联机-网络层 (XSG-Online)","parameters":{"serverUrl":"ws://127.0.0.1:3000","reconnectDelayMs":"3000","ackTimeoutMs":"8000"}},
+{"name":"XdRs_Online_Net","status":true,"description":"联机-网络层 (XSG-Online)","parameters":{"serverUrl":"ws://8.163.32.142:3000","reconnectDelayMs":"3000","ackTimeoutMs":"8000"}},
 {"name":"XdRs_Online_Core","status":true,"description":"联机-核心 (XSG-Online)","parameters":{"logLevel":"info"}},
 {"name":"XdRs_Online_Reconnect","status":true,"description":"联机-断线重连 (XSG-Online)","parameters":{"storageKey":"xsg.token","autoResumeOnBoot":"true"}},
 {"name":"XdRs_Online_Login","status":true,"description":"联机-登录 (XSG-Online)","parameters":{"titleCommandText":"联机","defaultMapId":"1","defaultSpawnX":"8","defaultSpawnY":"6"}},
@@ -62,7 +62,7 @@ https://cdn.socket.io/4.8.0/socket.io.min.js
 
 注意：
 - 顺序不能乱，每个插件依赖前面的
-- 把 `serverUrl` 改成你服务器的真实地址：`ws://<云服IP>:3000`
+- `serverUrl` 已填好 `ws://8.163.32.142:3000`（如果服务器换 IP 记得改）
 
 ### 4. 默认热键
 
