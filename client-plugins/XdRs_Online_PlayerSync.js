@@ -222,4 +222,140 @@
   Net.on('__disconnect__', () => {
     clearAllOthers();
   });
+
+  // ======================================================================
+  // 点击其他玩家 -> 弹互动菜单 (私聊 / 邀请交易 / 加好友 / 拉黑)
+  // 三步闭环
+  //   发起端 client: Scene_Map 监听 TouchInput.isTriggered, 命中其他玩家 sprite 弹 DOM 菜单
+  //   服端    server: chat.send / trade.invite / friend.add / social.block 都有 null check
+  //   表现端 client: 选定操作后 Net.request, 失败用 alert 提示
+  // 兜底
+  //   pid 不存在 / sprite 已被删 -> 命中失败直接 return
+  //   命名空间没注入 (Trade/Chat/Friend 没装) -> 菜单条目自动隐藏
+  //   高频点击 -> 250ms 节流
+  // ======================================================================
+  let _interactMenuRoot = null;
+  let _lastInteractTriggerMs = 0;
+
+  function pidUnderTouch(touchX, touchY) {
+    if (!Sync.others || Sync.others.size === 0) return null;
+    const ss = currentSpriteset();
+    if (!ss) return null;
+    for (const [pid, sp] of Sync.others.entries()) {
+      if (!sp || !sp.visible) continue;
+      // 角色 sprite 默认 anchor.x=0.5 anchor.y=1 (脚底)
+      const w = (sp.patternWidth ? sp.patternWidth() : 48) | 0;
+      const h = (sp.patternHeight ? sp.patternHeight() : 48) | 0;
+      const left = sp.x - w / 2;
+      const top = sp.y - h;
+      if (touchX >= left && touchX <= left + w && touchY >= top && touchY <= top + h) {
+        return { pid, sp };
+      }
+    }
+    return null;
+  }
+
+  function ensureInteractMenu() {
+    if (_interactMenuRoot) return _interactMenuRoot;
+    const root = document.createElement('div');
+    root.id = 'xsg-online-interact';
+    Object.assign(root.style, {
+      position: 'absolute',
+      display: 'none',
+      background: 'rgba(20, 20, 28, 0.95)',
+      color: '#eee',
+      border: '1px solid #444',
+      borderRadius: '6px',
+      padding: '4px 0',
+      minWidth: '128px',
+      zIndex: '9100',
+      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.6)',
+      fontFamily: 'sans-serif',
+      fontSize: '13px',
+    });
+    document.body.appendChild(root);
+    document.addEventListener('mousedown', (e) => {
+      if (_interactMenuRoot && _interactMenuRoot.style.display !== 'none' && !_interactMenuRoot.contains(e.target)) {
+        _interactMenuRoot.style.display = 'none';
+      }
+    });
+    _interactMenuRoot = root;
+    return root;
+  }
+
+  function openInteractMenu(pid, sp, screenX, screenY) {
+    const root = ensureInteractMenu();
+    const G = window.XdRsOnline;
+    const name = sp._name || ('#' + pid);
+    const items = [];
+    items.push({ key: 'header', label: name + '  (pid=' + pid + ')', disabled: true });
+    if (G.Chat) items.push({ key: 'whisper', label: '私聊 (/w)', action: () => doWhisper(pid, name) });
+    if (G.Trade && typeof G.Trade.inviteTo === 'function') items.push({ key: 'trade', label: '邀请交易', action: () => G.Trade.inviteTo(pid) });
+    items.push({ key: 'friend', label: '加好友', action: () => doFriend(pid, name) });
+    items.push({ key: 'block', label: '拉黑', action: () => doBlock(pid, name) });
+    items.push({ key: 'cancel', label: '取消', action: () => { root.style.display = 'none'; } });
+
+    root.innerHTML = '';
+    items.forEach((it) => {
+      const btn = document.createElement('div');
+      btn.textContent = it.label;
+      Object.assign(btn.style, {
+        padding: '6px 14px',
+        cursor: it.disabled ? 'default' : 'pointer',
+        color: it.disabled ? '#9aa' : '#eee',
+        userSelect: 'none',
+      });
+      if (!it.disabled) {
+        btn.addEventListener('mouseenter', () => { btn.style.background = '#3a82ff'; });
+        btn.addEventListener('mouseleave', () => { btn.style.background = ''; });
+        btn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          root.style.display = 'none';
+          try { it.action(); } catch (e) { console.error('[XSG-Online] interact action error', e); }
+        });
+      }
+      root.appendChild(btn);
+    });
+
+    const rect = Graphics._canvas ? Graphics._canvas.getBoundingClientRect() : { left: 0, top: 0 };
+    root.style.left = Math.round(rect.left + screenX + 8) + 'px';
+    root.style.top = Math.round(rect.top + screenY - 8) + 'px';
+    root.style.display = 'block';
+  }
+
+  function doWhisper(pid, name) {
+    const G = window.XdRsOnline;
+    if (G.Chat && typeof G.Chat.setWhisperTarget === 'function') {
+      G.Chat.setWhisperTarget(pid);
+    } else {
+      const text = window.prompt('私聊 ' + name + '：', '');
+      if (text) Net.request('chat.send', { channel: 'whisper', targetPid: pid, text }).catch((err) => alert(err && err.message || '发送失败'));
+    }
+  }
+
+  function doFriend(pid, name) {
+    Net.request('friend.add', { targetPid: pid }, 5000)
+      .then(() => alert('已发送好友请求给 ' + name))
+      .catch((err) => alert(err && err.message || '加好友失败'));
+  }
+
+  function doBlock(pid, name) {
+    if (!window.confirm('拉黑 ' + name + '？拉黑后将看不到他的聊天')) return;
+    Net.request('social.block', { targetPid: pid }, 5000)
+      .then(() => alert('已拉黑 ' + name))
+      .catch((err) => alert(err && err.message || '拉黑失败'));
+  }
+
+  const _Scene_Map_update = Scene_Map.prototype.update;
+  Scene_Map.prototype.update = function (active) {
+    _Scene_Map_update.call(this, active);
+    if (!Core.isOnline()) return;
+    if (!TouchInput.isTriggered()) return;
+    const now = Util.now();
+    if (now - _lastInteractTriggerMs < 250) return;
+    const hit = pidUnderTouch(TouchInput.x, TouchInput.y);
+    if (!hit) return;
+    _lastInteractTriggerMs = now;
+    openInteractMenu(hit.pid, hit.sp, TouchInput.x, TouchInput.y);
+  };
 })();
