@@ -112,7 +112,7 @@
   let keyBound = false;
 
   OnlineEntry.show = function () {
-    if (!entryBtn) build();
+    if (!entryBtn) buildEntryButton();
     entryBtn.style.display = 'block';
     if (!keyBound) bindKey();
   };
@@ -120,7 +120,7 @@
     if (entryBtn) entryBtn.style.display = 'none';
   };
 
-  function build() {
+  function buildEntryButton() {
     entryBtn = document.createElement('button');
     entryBtn.id = 'xsg-online-entry';
     entryBtn.textContent = cfg.text + '（M）';
