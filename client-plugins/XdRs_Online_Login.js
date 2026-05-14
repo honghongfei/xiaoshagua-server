@@ -134,17 +134,20 @@
   Scene_Title.prototype.commandXsgOnline = function () {
     const scene = this;
     if (this._commandWindow) this._commandWindow.close();
-    if (Core.isOnline()) {
-      if (window.confirm('当前已联机为 ' + (Core.session.character.name || '?') + '\n确定 = 退出联机；取消 = 保留')) {
-        Core.clearSession();
-        flash('已退出联机');
-      }
-      if (scene._commandWindow) { scene._commandWindow.open(); scene._commandWindow.activate(); }
-      return;
-    }
-    if (Core.session && Core.session.character) {
-      // 已 resume，直接下云存档进游戏
-      Net.connect().then(afterLogin).catch((err) => alert('连服失败：' + (err && err.message)));
+    // 已经 session 在手（或在线）→ 弹三选一菜单
+    if ((Core.isOnline()) || (Core.session && Core.session.character)) {
+      OnlineMenu.open(Core.session.character, (action) => {
+        if (action === 'enter') {
+          // 走「进入游戏」流程：保证 net 连通后再下云存档
+          Net.connect().then(afterLogin).catch((err) => alert('连服失败：' + (err && err.message)));
+        } else if (action === 'logout') {
+          Core.clearSession();
+          flash('已退出联机');
+          if (scene._commandWindow) { scene._commandWindow.open(); scene._commandWindow.activate(); }
+        } else {
+          if (scene._commandWindow) { scene._commandWindow.open(); scene._commandWindow.activate(); }
+        }
+      });
       return;
     }
     LoginOverlay.open((ok) => {
@@ -155,6 +158,51 @@
       afterLogin();
     });
   };
+
+  // ===== \u300c\u8054\u673a\u72b6\u6001\u300d\u4e09\u9009\u4e00\u83dc\u5355 =====
+  const OnlineMenu = {};
+  let menuRoot = null;
+  let menuCb = null;
+  OnlineMenu.open = function (character, cb) {
+    if (!menuRoot) buildMenu();
+    menuCb = cb;
+    menuRoot.querySelector('[data-name]').textContent = character.name || ('#' + character.pid);
+    menuRoot.style.display = 'flex';
+  };
+  OnlineMenu.close = function (action) {
+    if (menuRoot) menuRoot.style.display = 'none';
+    const cb = menuCb; menuCb = null;
+    if (cb) cb(action);
+  };
+  function buildMenu() {
+    menuRoot = document.createElement('div');
+    Object.assign(menuRoot.style, {
+      position: 'absolute', left: '0', top: '0', right: '0', bottom: '0',
+      background: 'rgba(0,0,0,0.55)',
+      display: 'none', alignItems: 'center', justifyContent: 'center', zIndex: '9999',
+      fontFamily: 'sans-serif', color: '#fff',
+    });
+    menuRoot.innerHTML = [
+      '<div style="background:#1f1f24;padding:22px 26px;border-radius:10px;min-width:300px;box-shadow:0 6px 32px rgba(0,0,0,.6)">',
+      '  <div style="font-size:16px;margin-bottom:14px;text-align:center">已登录：<b data-name></b></div>',
+      '  <button data-act="enter"  style="display:block;width:100%;padding:10px;margin-bottom:8px;background:#2c9c4a;color:#fff;border:0;border-radius:6px;font-size:15px;cursor:pointer">进入游戏（云存档继续）</button>',
+      '  <button data-act="logout" style="display:block;width:100%;padding:10px;margin-bottom:8px;background:#a05050;color:#fff;border:0;border-radius:6px;font-size:15px;cursor:pointer">退出联机</button>',
+      '  <button data-act="cancel" style="display:block;width:100%;padding:8px;background:#555;color:#fff;border:0;border-radius:6px;font-size:13px;cursor:pointer">取消</button>',
+      '</div>',
+    ].join('');
+    document.body.appendChild(menuRoot);
+    ['mousedown', 'mouseup', 'click', 'pointerdown', 'pointerup'].forEach((evt) => {
+      menuRoot.addEventListener(evt, (e) => {
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+      }, true);
+    });
+    menuRoot.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-act]');
+      if (!btn) return;
+      OnlineMenu.close(btn.dataset.act);
+    });
+  }
 
   // ---- 「联机」按钮在 Scene_Title 显示。Scene_Map 上不再显示。----
   const _Scene_Title_start = Scene_Title.prototype.start;
