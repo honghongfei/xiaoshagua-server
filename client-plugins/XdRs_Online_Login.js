@@ -87,17 +87,21 @@
     }
   };
 
-  // 在 Scene_Map 里点「联机」/ 按 M：弹登录窗 → 拿到 session → PlayerSync 自动接管同步
+  // 在 Scene_Map 里点「联机」/ 按 M：根据当前状态做不同事
+  //   未登录 → 弹登录窗
+  //   登录但未连接 → 重连
+  //   已在线 → 弹确认是否退出
   function activateOnlineOnMap() {
     if (Core.isOnline()) {
-      alert('当前已登录联机：' + (Core.session.character.name || ('#' + Core.session.character.pid)) +
-            '\n要退出可按 F12 控制台运行 XdRsOnline.Core.clearSession()');
+      const ch = Core.session.character;
+      if (window.confirm('当前已联机：' + (ch.name || ('#' + ch.pid)) + '\n点 确定 退出联机，点 取消 保留连接。')) {
+        Core.clearSession();
+        flash('已退出联机');
+      }
       return;
     }
     if (Core.session && Core.session.character) {
-      // Reconnect 已 resume：只需要 Net.connect，PlayerSync 会触发 enterMap
       Net.connect().then(() => {
-        // 触发一次 enterMap，让服务端知道你在哪
         if (G.PlayerSync && typeof G.PlayerSync.enterCurrentMap === 'function') {
           G.PlayerSync.enterCurrentMap();
         }
@@ -142,9 +146,31 @@
     if (!entryBtn) buildEntryButton();
     entryBtn.style.display = 'block';
     if (!keyBound) bindKey();
+    OnlineEntry.refresh();
+    if (!OnlineEntry._refreshTimer) {
+      OnlineEntry._refreshTimer = setInterval(OnlineEntry.refresh, 2000);
+    }
   };
   OnlineEntry.hide = function () {
     if (entryBtn) entryBtn.style.display = 'none';
+    if (OnlineEntry._refreshTimer) {
+      clearInterval(OnlineEntry._refreshTimer);
+      OnlineEntry._refreshTimer = null;
+    }
+  };
+  OnlineEntry.refresh = function () {
+    if (!entryBtn) return;
+    if (Core.isOnline()) {
+      const name = Core.session.character.name || ('#' + Core.session.character.pid);
+      entryBtn.textContent = '退出联机 [' + name + ']';
+      entryBtn.style.background = 'linear-gradient(135deg, #a05050 0%, #d04040 100%)';
+    } else if (Core.session && Core.session.character) {
+      entryBtn.textContent = '重连联机 [' + (Core.session.character.name || '?') + ']';
+      entryBtn.style.background = 'linear-gradient(135deg, #c08030 0%, #d4a040 100%)';
+    } else {
+      entryBtn.textContent = cfg.text + '（M）';
+      entryBtn.style.background = 'linear-gradient(135deg, #3a82ff 0%, #2c9c4a 100%)';
+    }
   };
 
   function buildEntryButton() {
