@@ -75,16 +75,15 @@
     };
   }
 
-  // 「联机」是附加层：玩家走原生「新游戏 / 继续」进游戏，进 Scene_Map 后再点联机按钮启用同步。
-  // 这里不做 setupNewGame、不做 reserveTransfer、不替原生剧情拍板。
-  // commandXsgOnline 在 Scene_Title 上仅显示提示，引导用户先进游戏。
+  // 「联机」只在 Scene_Map 上有按钮 / 热键；Scene_Title 不显示。
+  // 原生 Window_TitleCommand 上仍保留这一 hook 仅为兼容（如果将来卸了 XdRs_Arder 用原生 RMMZ Title 时还能用）
   Scene_Title.prototype.commandXsgOnline = function () {
-    const scene = this;
-    if (this._commandWindow) this._commandWindow.close();
-    alert('请先用「新游戏 / 继续」进入游戏，然后在地图里按 M 键或点屏幕右上的「联机」按钮启用联机同步。');
-    if (scene._commandWindow) {
-      scene._commandWindow.open();
-      scene._commandWindow.activate();
+    if (this._commandWindow) {
+      this._commandWindow.close();
+      // 提示后回标题
+      alert('请先进入游戏，再在地图里按 M 启用联机。');
+      this._commandWindow.open();
+      this._commandWindow.activate();
     }
   };
 
@@ -123,17 +122,7 @@
     }
   }
 
-  // ---- 「联机」按钮在 Scene_Title 和 Scene_Map 上都显示 ----
-  const _Scene_Title_start = Scene_Title.prototype.start;
-  Scene_Title.prototype.start = function () {
-    _Scene_Title_start.call(this);
-    OnlineEntry.show();
-  };
-  const _Scene_Title_terminate = Scene_Title.prototype.terminate;
-  Scene_Title.prototype.terminate = function () {
-    OnlineEntry.hide();
-    if (_Scene_Title_terminate) _Scene_Title_terminate.call(this);
-  };
+  // ---- 「联机」按钮只在 Scene_Map 显示。Scene_Title 上不显示也不能按。----
   const _Scene_Map_start_login = Scene_Map.prototype.start;
   Scene_Map.prototype.start = function () {
     _Scene_Map_start_login.call(this);
@@ -190,9 +179,7 @@
   function bindKey() {
     keyBound = true;
     document.addEventListener('keydown', (e) => {
-      const inTitle = SceneManager._scene instanceof Scene_Title;
-      const inMap = SceneManager._scene instanceof Scene_Map;
-      if (!inTitle && !inMap) return;
+      if (!(SceneManager._scene instanceof Scene_Map)) return;
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
       if (e.key === 'm' || e.key === 'M') {
         e.preventDefault();
@@ -202,9 +189,7 @@
   }
 
   function trigger() {
-    if (SceneManager._scene instanceof Scene_Title) {
-      SceneManager._scene.commandXsgOnline();
-    } else if (SceneManager._scene instanceof Scene_Map) {
+    if (SceneManager._scene instanceof Scene_Map) {
       activateOnlineOnMap();
     }
   }
