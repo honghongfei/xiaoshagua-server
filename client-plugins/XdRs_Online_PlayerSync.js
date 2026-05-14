@@ -323,9 +323,9 @@
       root.appendChild(btn);
     });
 
-    const rect = Graphics._canvas ? Graphics._canvas.getBoundingClientRect() : { left: 0, top: 0 };
-    root.style.left = Math.round(rect.left + screenX + 8) + 'px';
-    root.style.top = Math.round(rect.top + screenY - 8) + 'px';
+    // 右键事件给的是 viewport client 坐标, 菜单 position:absolute 直接用 (NW.js \u6e38\u620f\u7a97\u6ca1\u6709\u6eda\u52a8)
+    root.style.left = Math.round(screenX + 8) + 'px';
+    root.style.top = Math.round(screenY - 8) + 'px';
     root.style.display = 'block';
   }
 
@@ -369,16 +369,26 @@
     }
   }
 
-  const _Scene_Map_update = Scene_Map.prototype.update;
-  Scene_Map.prototype.update = function (active) {
-    _Scene_Map_update.call(this, active);
-    if (!Core.isOnline()) return;
-    if (!TouchInput.isTriggered()) return;
-    const now = Util.now();
-    if (now - _lastInteractTriggerMs < 250) return;
-    const hit = pidUnderTouch(TouchInput.x, TouchInput.y);
-    if (!hit) return;
-    _lastInteractTriggerMs = now;
-    openInteractMenu(hit.pid, hit.sp, TouchInput.x, TouchInput.y);
-  };
+  // 右键 = 玩家交互；左键留给 RMMZ 原生（移动 / 选 NPC）
+  // 用 contextmenu DOM 事件，不动 TouchInput 的 _cancelled (避免顶掉 Scene_Map 主菜单)
+  function bindContextMenu() {
+    if (window._xsgInteractBound) return;
+    window._xsgInteractBound = true;
+    document.addEventListener('contextmenu', (e) => {
+      if (!Core.isOnline()) return;
+      if (!(SceneManager._scene instanceof Scene_Map)) return;
+      // RMMZ canvas 在 body 下，用 Graphics.pageToCanvasX/Y 转坐标
+      const canvasX = typeof Graphics.pageToCanvasX === 'function' ? Graphics.pageToCanvasX(e.pageX) : e.pageX;
+      const canvasY = typeof Graphics.pageToCanvasY === 'function' ? Graphics.pageToCanvasY(e.pageY) : e.pageY;
+      const hit = pidUnderTouch(canvasX, canvasY);
+      if (!hit) return;
+      // 阻止浏览器原生右键菜单
+      e.preventDefault();
+      const now = Util.now();
+      if (now - _lastInteractTriggerMs < 250) return;
+      _lastInteractTriggerMs = now;
+      openInteractMenu(hit.pid, hit.sp, e.clientX, e.clientY);
+    });
+  }
+  bindContextMenu();
 })();
