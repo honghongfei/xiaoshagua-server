@@ -143,7 +143,15 @@
       boxShadow: '0 4px 14px rgba(0,0,0,0.5)',
       letterSpacing: '2px',
     });
-    entryBtn.addEventListener('click', () => trigger());
+    // 阻断所有指针事件向下穿透到 RMMZ canvas（不然点完会被画布同位置原菜单收走）
+    ['mousedown', 'mouseup', 'click', 'pointerdown', 'pointerup', 'touchstart', 'touchend'].forEach((evt) => {
+      entryBtn.addEventListener(evt, (e) => {
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        if (e.preventDefault) e.preventDefault();
+        if (evt === 'click' || evt === 'touchend') trigger();
+      }, true);
+    });
     entryBtn.addEventListener('mouseenter', () => { entryBtn.style.transform = 'scale(1.05)'; });
     entryBtn.addEventListener('mouseleave', () => { entryBtn.style.transform = 'scale(1)'; });
     document.body.appendChild(entryBtn);
