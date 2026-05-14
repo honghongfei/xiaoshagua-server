@@ -12,11 +12,9 @@ module.exports = {
       listen_timeout: 10000,
       env: {
         NODE_ENV: 'production',
-        PORT: 3000,
       },
       env_development: {
         NODE_ENV: 'development',
-        PORT: 3000,
       },
       out_file: 'logs/pm2-out.log',
       error_file: 'logs/pm2-err.log',
