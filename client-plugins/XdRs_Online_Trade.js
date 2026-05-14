@@ -162,17 +162,106 @@
     });
   }
 
+  // 三步闭环 - 交易加物品 UI
+  //   发起端: 玩家在 picker 里选物 + 数量 -> sendOffer({items})
+  //   服端:    trade.offer 已有 schema 验证 + 数量上限
+  //   表现端:  trade.update.evt 回调里重新 render()
+  // 兜底: 数量<=0 / 数量>持有量 都 clamp; 角色无该物时不允许选; 重叠物品自动合并
+  let pickerRoot = null;
+
+  function listOwnedItems() {
+    if (typeof $gameParty === 'undefined' || !$gameParty) return [];
+    const out = [];
+    const push = (kind, arr, bucket) => {
+      if (!Array.isArray(arr) || !bucket) return;
+      for (let i = 1; i < arr.length; i++) {
+        const data = arr[i];
+        if (!data || !data.name) continue;
+        const have = bucket[i] | 0;
+        if (have > 0) out.push({ kind, dataId: i, name: data.name, iconIndex: data.iconIndex || 0, have });
+      }
+    };
+    push('item',   $dataItems,   $gameParty._items);
+    push('weapon', $dataWeapons, $gameParty._weapons);
+    push('armor',  $dataArmors,  $gameParty._armors);
+    return out;
+  }
+
+  function ensurePickerUI() {
+    if (pickerRoot) return pickerRoot;
+    pickerRoot = document.createElement('div');
+    pickerRoot.id = 'xsg-online-trade-picker';
+    Object.assign(pickerRoot.style, {
+      position: 'absolute',
+      left: '0', top: '0', right: '0', bottom: '0',
+      background: 'rgba(0, 0, 0, 0.55)',
+      display: 'none', alignItems: 'center', justifyContent: 'center',
+      zIndex: '9200', fontFamily: 'sans-serif', color: '#eee',
+    });
+    pickerRoot.innerHTML = [
+      '<div style="background:#1b1c20;border-radius:10px;width:520px;max-width:95%;max-height:80%;display:flex;flex-direction:column;box-shadow:0 8px 24px rgba(0,0,0,0.6)">',
+      '  <div style="padding:10px 14px;border-bottom:1px solid #333;display:flex;align-items:center;gap:8px">',
+      '    <span style="flex:1;font-weight:bold">选择物品加入交易</span>',
+      '    <button data-act="close-picker" style="background:#444;color:#fff;border:0;border-radius:3px;padding:2px 8px;cursor:pointer">×</button>',
+      '  </div>',
+      '  <div data-picker-list style="flex:1;overflow-y:auto;padding:6px 14px;line-height:1.7"></div>',
+      '</div>',
+    ].join('');
+    document.body.appendChild(pickerRoot);
+    pickerRoot.querySelector('button[data-act=close-picker]').addEventListener('click', () => {
+      pickerRoot.style.display = 'none';
+    });
+    pickerRoot.addEventListener('click', (e) => {
+      if (e.target === pickerRoot) pickerRoot.style.display = 'none';
+    });
+    return pickerRoot;
+  }
+
   function promptAddItem() {
-    const raw = window.prompt('物品格式：kind#id×count （kind=item/weapon/armor）。例：item#5×3', 'item#1×1');
-    if (!raw) return;
-    const m = raw.match(/^(item|weapon|armor)#(\d+)[x×*](\d+)$/i);
-    if (!m) { setStatus('格式不对', true); return; }
-    const it = { kind: m[1].toLowerCase(), dataId: Number(m[2]), count: Number(m[3]) };
-    const items = (Trade.current.mySide.items || []).slice();
-    const exist = items.find((x) => x.kind === it.kind && x.dataId === it.dataId);
-    if (exist) exist.count = it.count;
-    else items.push(it);
-    sendOffer({ items });
+    if (!Trade.current) return;
+    ensurePickerUI();
+    const list = listOwnedItems();
+    const listEl = pickerRoot.querySelector('[data-picker-list]');
+    if (list.length === 0) {
+      listEl.innerHTML = '<div style="color:#888">背包是空的，没有可交易的物品。</div>';
+    } else {
+      const offered = Trade.current.mySide.items || [];
+      const offeredMap = new Map(offered.map((it) => [it.kind + '#' + it.dataId, it.count | 0]));
+      listEl.innerHTML = list.map((it) => {
+        const key = it.kind + '#' + it.dataId;
+        const inOffer = offeredMap.get(key) || 0;
+        return [
+          '<div data-row="' + key + '" style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #2c2d33">',
+          '  <span style="flex:1">' + escape(it.name) + ' <span style="color:#888;font-size:11px">(' + it.kind + '#' + it.dataId + ')</span></span>',
+          '  <span style="color:#9fd8ff;min-width:60px;text-align:right">持有:' + it.have + '</span>',
+          '  <span style="color:#ffd070;min-width:64px;text-align:right">已上桌:' + inOffer + '</span>',
+          '  <input data-amt type="number" min="0" max="' + it.have + '" value="' + inOffer + '" style="width:64px;background:#111;color:#fff;border:1px solid #333;padding:2px 4px;border-radius:3px"/>',
+          '  <button data-act="set" style="background:#3a82ff;color:#fff;border:0;border-radius:3px;padding:2px 10px;cursor:pointer">放入</button>',
+          '</div>',
+        ].join('');
+      }).join('');
+
+      listEl.querySelectorAll('div[data-row]').forEach((row) => {
+        const key = row.dataset.row;
+        const [kind, idStr] = key.split('#');
+        const dataId = Number(idStr);
+        const have = list.find((x) => x.kind === kind && x.dataId === dataId).have;
+        row.querySelector('button[data-act=set]').addEventListener('click', () => {
+          const inp = row.querySelector('input[data-amt]');
+          let amount = Number(inp.value) | 0;
+          if (amount < 0) amount = 0;
+          if (amount > have) amount = have;
+          const items = (Trade.current.mySide.items || []).slice().filter((it) => !(it.kind === kind && it.dataId === dataId));
+          if (amount > 0) items.push({ kind, dataId, count: amount });
+          sendOffer({ items });
+        });
+      });
+    }
+    pickerRoot.style.display = 'flex';
+  }
+
+  function escape(s) {
+    return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   }
 
   function sendOffer(patch) {
@@ -241,6 +330,12 @@
     if (Trade.current && Trade.current.tradeId === e.tradeId) {
       const text = e.ok ? '交易成功' : ('交易结束: ' + (e.reason || ''));
       setStatus(text);
+      // 交易成功后立即拉一次 inventory.snapshot 同步本地 (服端原子转账已完成)
+      if (e.ok && G.Inv && typeof G.Inv.reconcileLocal === 'function') {
+        Net.request('inventory.snapshot', {}, 4000)
+          .then((snap) => G.Inv.reconcileLocal(snap))
+          .catch(() => {});
+      }
       setTimeout(() => endLocal(e.reason || 'done'), 1200);
     }
   });
