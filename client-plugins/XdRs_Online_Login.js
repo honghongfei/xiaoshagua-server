@@ -75,77 +75,55 @@
     };
   }
 
-  function enterGameFromSession() {
-    const ch = Core.session.character;
-    DataManager.setupNewGame();
-    $gameParty.setupStartingMembers();
-    // 标志：进 Scene_Map 后需要解锁
-    G._needsUnlockOnMap = true;
-    if (ch.mapId && ch.mapId !== 1) {
-      const fbX = (typeof $dataSystem !== 'undefined' && $dataSystem) ? $dataSystem.startX : 0;
-      const fbY = (typeof $dataSystem !== 'undefined' && $dataSystem) ? $dataSystem.startY : 0;
-      $gamePlayer.reserveTransfer(
-        ch.mapId,
-        ch.x != null ? ch.x : fbX,
-        ch.y != null ? ch.y : fbY,
-        ch.d || 2,
-        0,
-      );
-    }
-    SceneManager.goto(Scene_Map);
-  }
-
-  // Scene_Map 起来后，如果是「联机进场」，把可能由 setupNewGame 引发的
-  // 起点地图自动事件残留（forced move route）清掉，否则玩家在另一张地图上动不了
-  const _Scene_Map_onMapLoaded_login = Scene_Map.prototype.onMapLoaded;
-  Scene_Map.prototype.onMapLoaded = function () {
-    _Scene_Map_onMapLoaded_login.call(this);
-    if (G._needsUnlockOnMap) {
-      G._needsUnlockOnMap = false;
-      try {
-        if ($gamePlayer.isMoveRouteForcing()) {
-          $gamePlayer._moveRouteForcing = false;
-          $gamePlayer._moveRoute = null;
-          $gamePlayer._moveRouteIndex = 0;
-          $gamePlayer._waitCount = 0;
-          $gamePlayer._originalMoveRoute = null;
-          if (Util && Util.log) Util.log('info', 'cleared stale forced move route after online enter');
-        }
-      } catch (e) { /* ignore */ }
-    }
-  };
-
+  // 「联机」是附加层：玩家走原生「新游戏 / 继续」进游戏，进 Scene_Map 后再点联机按钮启用同步。
+  // 这里不做 setupNewGame、不做 reserveTransfer、不替原生剧情拍板。
+  // commandXsgOnline 在 Scene_Title 上仅显示提示，引导用户先进游戏。
   Scene_Title.prototype.commandXsgOnline = function () {
     const scene = this;
     if (this._commandWindow) this._commandWindow.close();
-    // 已经被 Reconnect 自动 resume 过 → 跳过登录表，直接进游戏
+    alert('请先用「新游戏 / 继续」进入游戏，然后在地图里按 M 键或点屏幕右上的「联机」按钮启用联机同步。');
+    if (scene._commandWindow) {
+      scene._commandWindow.open();
+      scene._commandWindow.activate();
+    }
+  };
+
+  // 在 Scene_Map 里点「联机」/ 按 M：弹登录窗 → 拿到 session → PlayerSync 自动接管同步
+  function activateOnlineOnMap() {
+    if (Core.isOnline()) {
+      alert('当前已登录联机：' + (Core.session.character.name || ('#' + Core.session.character.pid)) +
+            '\n要退出可按 F12 控制台运行 XdRsOnline.Core.clearSession()');
+      return;
+    }
     if (Core.session && Core.session.character) {
-      const ch = Core.session.character;
-      if (window.confirm('已登录为 ' + (ch.name || ('#' + ch.pid)) + '，现在进入游戏？\n(取消则回到标题菜单)')) {
-        enterGameFromSession();
-      } else if (scene._commandWindow) {
-        scene._commandWindow.open();
-        scene._commandWindow.activate();
-      }
+      // Reconnect 已 resume：只需要 Net.connect，PlayerSync 会触发 enterMap
+      Net.connect().then(() => {
+        // 触发一次 enterMap，让服务端知道你在哪
+        if (G.PlayerSync && typeof G.PlayerSync.enterCurrentMap === 'function') {
+          G.PlayerSync.enterCurrentMap();
+        }
+        flash('联机已激活：' + Core.session.character.name);
+      }).catch((err) => alert('联机失败：' + (err && err.message)));
       return;
     }
     LoginOverlay.open((ok) => {
-      if (!ok) {
-        if (scene._commandWindow) {
-          scene._commandWindow.open();
-          scene._commandWindow.activate();
-        }
-        return;
+      if (!ok) return;
+      if (G.PlayerSync && typeof G.PlayerSync.enterCurrentMap === 'function') {
+        G.PlayerSync.enterCurrentMap();
       }
-      enterGameFromSession();
+      flash('联机已激活：' + Core.session.character.name);
     });
-  };
+  }
 
-  // ---- 自定义 Scene_Title 兼容：键盘 M / 屏幕浮动按钮 ----
-  // 因为 XdRs_Arder 完全替换了 Scene_Title 用贴图按钮，我们的 Window_TitleCommand
-  // 钩子不会被触发。所以提供 2 个旁路入口：
-  //   1) 屏幕右上角一个 DOM "联机" 按钮，永远可见
-  //   2) Title 场景按 M 键触发
+  function flash(text) {
+    if (typeof $gameTemp !== 'undefined' && $gameTemp && typeof $gameTemp.addWorldMessage === 'function') {
+      $gameTemp.addWorldMessage('\\c[10][系统]\\c[0] ' + text, true);
+    } else {
+      console.log('[XSG-Online] ' + text);
+    }
+  }
+
+  // ---- 「联机」按钮在 Scene_Title 和 Scene_Map 上都显示 ----
   const _Scene_Title_start = Scene_Title.prototype.start;
   Scene_Title.prototype.start = function () {
     _Scene_Title_start.call(this);
@@ -155,6 +133,16 @@
   Scene_Title.prototype.terminate = function () {
     OnlineEntry.hide();
     if (_Scene_Title_terminate) _Scene_Title_terminate.call(this);
+  };
+  const _Scene_Map_start_login = Scene_Map.prototype.start;
+  Scene_Map.prototype.start = function () {
+    _Scene_Map_start_login.call(this);
+    OnlineEntry.show();
+  };
+  const _Scene_Map_terminate_login = Scene_Map.prototype.terminate;
+  Scene_Map.prototype.terminate = function () {
+    OnlineEntry.hide();
+    if (_Scene_Map_terminate_login) _Scene_Map_terminate_login.call(this);
   };
 
   const OnlineEntry = {};
@@ -202,7 +190,9 @@
   function bindKey() {
     keyBound = true;
     document.addEventListener('keydown', (e) => {
-      if (!(SceneManager._scene instanceof Scene_Title)) return;
+      const inTitle = SceneManager._scene instanceof Scene_Title;
+      const inMap = SceneManager._scene instanceof Scene_Map;
+      if (!inTitle && !inMap) return;
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
       if (e.key === 'm' || e.key === 'M') {
         e.preventDefault();
@@ -212,8 +202,11 @@
   }
 
   function trigger() {
-    if (!(SceneManager._scene instanceof Scene_Title)) return;
-    SceneManager._scene.commandXsgOnline();
+    if (SceneManager._scene instanceof Scene_Title) {
+      SceneManager._scene.commandXsgOnline();
+    } else if (SceneManager._scene instanceof Scene_Map) {
+      activateOnlineOnMap();
+    }
   }
 
   // ---- DOM login overlay ----

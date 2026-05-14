@@ -120,6 +120,7 @@
   };
 
   // ---------- enterMap + sprite management ----------
+  Sync.enterCurrentMap = enterCurrentMap;
   function enterCurrentMap() {
     ensureOtherPlayerClass();
     const mapId = $gameMap.mapId();

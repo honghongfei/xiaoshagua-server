@@ -7,6 +7,12 @@ server/.tsbuildinfo
 server/.env
 server/.env.local
 
+# Repo root tooling (cdp-eval helpers)
+node_modules/
+probe*.js
+fix-attempt.js
+.gh-login.log
+
 # Editor
 .vscode/
 .idea/
