@@ -69,7 +69,12 @@
       const pid = Number(a.dataset.pid);
       const op = a.dataset.op;
       if (op === 'whisper') {
-        if (G.Chat) G.Chat.setWhisperTarget(pid);
+        if (G.Chat && typeof G.Chat.startWhisper === 'function') {
+          G.Chat.startWhisper(pid);
+        } else {
+          const text = window.prompt('\u79c1\u804a #' + pid + ':', '');
+          if (text) Net.request('chat.send', { channel: 'whisper', targetPid: pid, text }).catch(showErr);
+        }
       } else if (op === 'remove-friend') {
         Net.request('social.remove', { pid, kind: 'friend' }).then(Friend.refresh).catch(showErr);
       } else if (op === 'unblock') {

@@ -331,11 +331,12 @@
 
   function doWhisper(pid, name) {
     const G = window.XdRsOnline;
-    if (G.Chat && typeof G.Chat.setWhisperTarget === 'function') {
-      G.Chat.setWhisperTarget(pid);
+    if (G.Chat && typeof G.Chat.startWhisper === 'function') {
+      G.Chat.startWhisper(pid, name);
     } else {
-      const text = window.prompt('私聊 ' + name + '：', '');
-      if (text) Net.request('chat.send', { channel: 'whisper', targetPid: pid, text }).catch((err) => alert(err && err.message || '发送失败'));
+      // fallback (Chat \u63d2\u4ef6\u672a\u88c5)
+      const text = window.prompt('\u79c1\u804a ' + name + ':', '');
+      if (text) Net.request('chat.send', { channel: 'whisper', targetPid: pid, text }).catch((err) => alert(err && err.message || '\u53d1\u9001\u5931\u8d25'));
     }
   }
 

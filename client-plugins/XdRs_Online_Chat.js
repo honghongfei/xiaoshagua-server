@@ -50,6 +50,27 @@
   Chat.currentChannel = cfg.defaultChannel;
   Chat.whisperTarget = null;
 
+  // \u7edf\u4e00\u5165\u53e3: \u4e0d\u7ba1\u662f Ui_Message \u539f\u751f\u96c6\u6210\u8fd8\u662f DOM \u9762\u677f\u90fd\u80fd\u7528
+  // PlayerSync \u4ea4\u4e92\u83dc\u5355 / Friend \u9762\u677f \u90fd\u8c03\u8fd9\u4e2a
+  Chat.startWhisper = function (pid, name) {
+    if (typeof Chat.setWhisperTarget === 'function') {
+      Chat.setWhisperTarget(pid);
+      return;
+    }
+    const text = window.prompt('\u79c1\u804a ' + (name || ('#' + pid)) + ':', '');
+    if (text) {
+      Net.request('chat.send', { channel: 'whisper', targetPid: pid, text }).catch((err) => {
+        const msg = err && err.message || '\u53d1\u9001\u5931\u8d25';
+        console.warn('[XSG-Online] whisper failed:', msg);
+        if (typeof $gameTemp !== 'undefined' && $gameTemp && typeof $gameTemp.addWorldMessage === 'function') {
+          $gameTemp.addWorldMessage('\\c[18][\u79c1\u804a\u5931\u8d25]\\c[0] ' + msg, true);
+        } else {
+          alert(msg);
+        }
+      });
+    }
+  };
+
   // ============================================================
   // Native integration: hook Ui_Message.sendOut + addWorldMessage
   // ============================================================
