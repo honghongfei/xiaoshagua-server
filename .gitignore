@@ -1,0 +1,22 @@
+# Server build / data / runtime
+server/node_modules/
+server/dist/
+server/data/
+server/logs/
+server/.tsbuildinfo
+server/.env
+server/.env.local
+
+# Editor
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Backups
+*.bak
+*.swp

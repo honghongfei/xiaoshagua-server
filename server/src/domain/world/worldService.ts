@@ -1,0 +1,152 @@
+import type { Server } from 'socket.io';
+import { config } from '../../config.js';
+import { log } from '../../log.js';
+import { AppError } from '../../util/errors.js';
+import {
+  getOnlineByPid,
+  listOnline,
+  persistPosition,
+  type OnlinePlayer,
+} from '../player/playerService.js';
+import { MapState, toView } from './mapState.js';
+
+const maps = new Map<number, MapState>();
+let io: Server | null = null;
+let tickHandle: NodeJS.Timeout | null = null;
+let persistHandle: NodeJS.Timeout | null = null;
+
+export function attachIo(server: Server): void {
+  io = server;
+}
+
+export function startTick(): void {
+  if (tickHandle) return;
+  tickHandle = setInterval(flushAll, config.worldTickMs);
+  persistHandle = setInterval(flushPositions, 60_000);
+  log.info({ tickMs: config.worldTickMs }, 'world tick started');
+}
+
+export function stopTick(): void {
+  if (tickHandle) clearInterval(tickHandle);
+  if (persistHandle) clearInterval(persistHandle);
+  tickHandle = null;
+  persistHandle = null;
+}
+
+function getOrCreate(mapId: number): MapState {
+  let m = maps.get(mapId);
+  if (!m) {
+    m = new MapState(mapId);
+    maps.set(mapId, m);
+  }
+  return m;
+}
+
+export function room(mapId: number): string {
+  return `map:${mapId}`;
+}
+
+export function enterMap(
+  player: OnlinePlayer,
+  mapId: number,
+  x: number,
+  y: number,
+  d: number,
+): { snapshot: { mapId: number; others: ReturnType<MapState['snapshotFor']> } } {
+  if (player.mapId && player.mapId !== mapId) {
+    leaveMap(player.pid, player.mapId);
+  }
+
+  const map = getOrCreate(mapId);
+  if (map.size() >= config.maxPlayersPerMap && !map.players.has(player.pid)) {
+    throw new AppError('MAP_FULL', 'map is full');
+  }
+
+  player.mapId = mapId;
+  player.x = x;
+  player.y = y;
+  player.d = d;
+  player.lastActAt = Date.now();
+
+  map.add(player);
+
+  const socket = io?.sockets.sockets.get(player.socketId);
+  if (socket) {
+    socket.join(room(mapId));
+  }
+
+  return {
+    snapshot: { mapId, others: map.snapshotFor(player.pid) },
+  };
+}
+
+export function leaveMap(pid: number, mapId: number): void {
+  const map = maps.get(mapId);
+  if (!map) return;
+  const p = map.remove(pid);
+  if (p) {
+    const sock = io?.sockets.sockets.get(p.socketId);
+    if (sock) sock.leave(room(mapId));
+  }
+  if (map.size() === 0) {
+    flushOne(map);
+  }
+}
+
+export function moveOnMap(pid: number, x: number, y: number, d: number): boolean {
+  const p = getOnlineByPid(pid);
+  if (!p) return false;
+  const map = maps.get(p.mapId);
+  if (!map) return false;
+  return map.applyMove(pid, x, y, d);
+}
+
+export function actOnMap(pid: number, type: string): boolean {
+  const p = getOnlineByPid(pid);
+  if (!p) return false;
+  const map = maps.get(p.mapId);
+  if (!map) return false;
+  return map.applyAction(pid, type);
+}
+
+function flushAll(): void {
+  if (!io) return;
+  for (const map of maps.values()) {
+    flushOne(map);
+  }
+}
+
+function flushOne(map: MapState): void {
+  if (!io) return;
+  const delta = map.drainDelta();
+  if (!delta) return;
+
+  const payload = {
+    seq: ++map.seq,
+    enter: delta.enter.map(toView),
+    leave: delta.leave,
+    move: Array.from(delta.move.values()),
+    action: delta.action,
+  };
+
+  io.to(room(map.mapId)).emit('world.delta', payload);
+}
+
+function flushPositions(): void {
+  let n = 0;
+  for (const p of listOnline()) {
+    try {
+      persistPosition(p);
+      n++;
+    } catch (err) {
+      log.warn({ err, pid: p.pid }, 'persistPosition failed');
+    }
+  }
+  if (n > 0) log.debug({ count: n }, 'positions flushed');
+}
+
+export function stats(): { maps: number; players: number } {
+  let total = 0;
+  for (const m of maps.values()) total += m.size();
+  return { maps: maps.size, players: total };
+}
