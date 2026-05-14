@@ -50,26 +50,31 @@
     spawnY: Number(params.defaultSpawnY || 6),
   };
 
-  // ---- Title menu hook ----
-  const _Window_TitleCommand_makeCommandList = Window_TitleCommand.prototype.makeCommandList;
-  Window_TitleCommand.prototype.makeCommandList = function () {
-    _Window_TitleCommand_makeCommandList.call(this);
-    this.addCommand(cfg.text, 'xsgOnline');
-  };
-
-  const _Scene_Title_createCommandWindow = Scene_Title.prototype.createCommandWindow;
-  Scene_Title.prototype.createCommandWindow = function () {
-    _Scene_Title_createCommandWindow.call(this);
-    this._commandWindow.setHandler('xsgOnline', this.commandXsgOnline.bind(this));
-  };
+  // ---- Title menu hook（标准 RMMZ 用，兼容回退）----
+  if (typeof Window_TitleCommand !== 'undefined' && Window_TitleCommand.prototype) {
+    const _Window_TitleCommand_makeCommandList = Window_TitleCommand.prototype.makeCommandList;
+    Window_TitleCommand.prototype.makeCommandList = function () {
+      _Window_TitleCommand_makeCommandList.call(this);
+      this.addCommand(cfg.text, 'xsgOnline');
+    };
+    const _Scene_Title_createCommandWindow = Scene_Title.prototype.createCommandWindow;
+    if (_Scene_Title_createCommandWindow) {
+      Scene_Title.prototype.createCommandWindow = function () {
+        _Scene_Title_createCommandWindow.call(this);
+        if (this._commandWindow) this._commandWindow.setHandler('xsgOnline', this.commandXsgOnline.bind(this));
+      };
+    }
+  }
 
   Scene_Title.prototype.commandXsgOnline = function () {
     const scene = this;
-    this._commandWindow.close();
+    if (this._commandWindow) this._commandWindow.close();
     LoginOverlay.open((ok) => {
       if (!ok) {
-        scene._commandWindow.open();
-        scene._commandWindow.activate();
+        if (scene._commandWindow) {
+          scene._commandWindow.open();
+          scene._commandWindow.activate();
+        }
         return;
       }
       const ch = Core.session.character;
@@ -85,6 +90,73 @@
       SceneManager.goto(Scene_Map);
     });
   };
+
+  // ---- 自定义 Scene_Title 兼容：键盘 M / 屏幕浮动按钮 ----
+  // 因为 XdRs_Arder 完全替换了 Scene_Title 用贴图按钮，我们的 Window_TitleCommand
+  // 钩子不会被触发。所以提供 2 个旁路入口：
+  //   1) 屏幕右上角一个 DOM "联机" 按钮，永远可见
+  //   2) Title 场景按 M 键触发
+  const _Scene_Title_start = Scene_Title.prototype.start;
+  Scene_Title.prototype.start = function () {
+    _Scene_Title_start.call(this);
+    OnlineEntry.show();
+  };
+  const _Scene_Title_terminate = Scene_Title.prototype.terminate;
+  Scene_Title.prototype.terminate = function () {
+    OnlineEntry.hide();
+    if (_Scene_Title_terminate) _Scene_Title_terminate.call(this);
+  };
+
+  const OnlineEntry = {};
+  let entryBtn = null;
+  let keyBound = false;
+
+  OnlineEntry.show = function () {
+    if (!entryBtn) build();
+    entryBtn.style.display = 'block';
+    if (!keyBound) bindKey();
+  };
+  OnlineEntry.hide = function () {
+    if (entryBtn) entryBtn.style.display = 'none';
+  };
+
+  function build() {
+    entryBtn = document.createElement('button');
+    entryBtn.id = 'xsg-online-entry';
+    entryBtn.textContent = cfg.text + '（M）';
+    Object.assign(entryBtn.style, {
+      position: 'absolute',
+      right: '14px', top: '14px',
+      padding: '10px 20px',
+      fontSize: '18px', fontWeight: 'bold',
+      background: 'linear-gradient(135deg, #3a82ff 0%, #2c9c4a 100%)',
+      color: '#fff', border: '0', borderRadius: '8px',
+      cursor: 'pointer', zIndex: '9000',
+      boxShadow: '0 4px 14px rgba(0,0,0,0.5)',
+      letterSpacing: '2px',
+    });
+    entryBtn.addEventListener('click', () => trigger());
+    entryBtn.addEventListener('mouseenter', () => { entryBtn.style.transform = 'scale(1.05)'; });
+    entryBtn.addEventListener('mouseleave', () => { entryBtn.style.transform = 'scale(1)'; });
+    document.body.appendChild(entryBtn);
+  }
+
+  function bindKey() {
+    keyBound = true;
+    document.addEventListener('keydown', (e) => {
+      if (!(SceneManager._scene instanceof Scene_Title)) return;
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+      if (e.key === 'm' || e.key === 'M') {
+        e.preventDefault();
+        trigger();
+      }
+    });
+  }
+
+  function trigger() {
+    if (!(SceneManager._scene instanceof Scene_Title)) return;
+    SceneManager._scene.commandXsgOnline();
+  }
 
   // ---- DOM login overlay ----
   const LoginOverlay = {};
