@@ -29,6 +29,7 @@ import {
   persistPosition,
   register,
   resume,
+  updateCharacterAppearance,
   type CharacterPublic,
 } from '../domain/player/playerService.js';
 import {
@@ -204,6 +205,15 @@ export function installRouter(io: Server): void {
         if (!session.authed || session.pid === null) throw new AppError('NO_AUTH', 'login required');
         const input = parse(PlayerEnterMap, raw);
         const character = getCharacter(session.pid);
+        // 三步闭环 - 角色贴图同步:
+        //   1. 客户端在 enterMap 里把当前角色 characterName / characterIndex 上来
+        //   2. 服端用 client 给的覆盖 DB 老值, 并 persist 到 character.char_set / char_index
+        //   3. 其他客户端的 world.delta / others snapshot 就能拿到正确贴图
+        const effectiveCharSet = input.charSet ?? character.charSet;
+        const effectiveCharIndex = input.charIndex ?? character.charIndex;
+        if (input.charSet != null && input.charSet !== character.charSet) {
+          updateCharacterAppearance(session.pid, input.charSet, input.charIndex ?? character.charIndex);
+        }
         markOnline({
           pid: session.pid,
           accountId: session.accountId ?? 0,
@@ -214,8 +224,8 @@ export function installRouter(io: Server): void {
           x: input.x,
           y: input.y,
           d: input.d,
-          charSet: character.charSet,
-          charIndex: character.charIndex,
+          charSet: effectiveCharSet,
+          charIndex: effectiveCharIndex,
           level: character.level,
           lastActAt: Date.now(),
         });

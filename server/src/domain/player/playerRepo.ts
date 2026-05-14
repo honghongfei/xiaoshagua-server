@@ -129,6 +129,17 @@ export function updateCharacterPosition(
   ).run(mapId, x, y, direction, Date.now(), characterId);
 }
 
+export function updateCharacterAppearance(
+  characterId: number,
+  charSet: string,
+  charIndex: number,
+): void {
+  const db = openDb();
+  db.prepare(
+    'UPDATE character SET char_set = ?, char_index = ?, updated_at = ? WHERE id = ?',
+  ).run(charSet, charIndex, Date.now(), characterId);
+}
+
 export function insertAuthToken(row: AuthTokenRow): void {
   const db = openDb();
   db.prepare(

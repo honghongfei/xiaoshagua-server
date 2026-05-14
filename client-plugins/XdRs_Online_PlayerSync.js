@@ -46,7 +46,22 @@
 
     Sprite_OtherPlayer.prototype.initialize = function (view) {
       const ghost = new Game_Character();
-      ghost.setImage(view.charSet || '', view.charIndex || 0);
+      // 三步闭环 - 渲染兜底:
+      //   1. server 给的 charSet 优先
+      //   2. server 没给 (老数据 / null) -> 用本地玩家自己的角色图作 fallback
+      //   3. 本地玩家也没有 -> 用 RMMZ 默认的 Actor1
+      let charSet = view.charSet;
+      let charIndex = view.charIndex;
+      if (!charSet) {
+        const leader = $gameParty && $gameParty.leader && $gameParty.leader();
+        if (leader && typeof leader.characterName === 'function') {
+          charSet = leader.characterName();
+          if (charIndex == null) charIndex = leader.characterIndex();
+        }
+      }
+      if (!charSet) charSet = 'Actor1';
+      if (charIndex == null) charIndex = 0;
+      ghost.setImage(charSet, charIndex);
       ghost.setPosition(view.x, view.y);
       ghost.setDirection(view.d || 2);
       Sprite_Character.prototype.initialize.call(this, ghost);
@@ -127,7 +142,20 @@
     const x = $gamePlayer.x | 0;
     const y = $gamePlayer.y | 0;
     const d = $gamePlayer.direction();
-    Net.request('player.enterMap', { mapId, x, y, d })
+    // 把本地角色图 + index 带上去, 服端 markOnline + DB 写回, 别的客户端也能看到本人的真实贴图
+    let charSet = null;
+    let charIndex = 0;
+    const leader = $gameParty && $gameParty.leader && $gameParty.leader();
+    if (leader && typeof leader.characterName === 'function') {
+      charSet = leader.characterName() || null;
+      charIndex = typeof leader.characterIndex === 'function' ? (leader.characterIndex() | 0) : 0;
+    }
+    const payload = { mapId, x, y, d };
+    if (charSet) {
+      payload.charSet = charSet;
+      payload.charIndex = charIndex;
+    }
+    Net.request('player.enterMap', payload)
       .then((snap) => {
         Util.log('info', 'enterMap ok others=' + ((snap && snap.others) ? snap.others.length : 0));
         clearAllOthers();

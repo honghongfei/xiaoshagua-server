@@ -181,3 +181,7 @@ export function listOnline(): OnlinePlayer[] {
 export function persistPosition(p: OnlinePlayer): void {
   repo.updateCharacterPosition(p.pid, p.mapId, p.x, p.y, p.d);
 }
+
+export function updateCharacterAppearance(characterId: number, charSet: string, charIndex: number): void {
+  repo.updateCharacterAppearance(characterId, charSet, charIndex);
+}

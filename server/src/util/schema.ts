@@ -42,6 +42,8 @@ export const PlayerEnterMap = z.object({
   d: z.number().int().refine((v) => v === 2 || v === 4 || v === 6 || v === 8, {
     message: 'd must be 2/4/6/8',
   }),
+  charSet: z.string().max(64).optional(),
+  charIndex: z.number().int().min(0).max(7).optional(),
 });
 
 export const PlayerMove = z.object({
