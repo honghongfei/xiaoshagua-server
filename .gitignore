@@ -11,6 +11,12 @@ server/.env.local
 node_modules/
 probe*.js
 fix-attempt.js
+sim-click*.js
+trigger-dialog.js
+cdp-eval.js
+test-flow*.js
+inspect-scene-mgr.js
+wait-and-check.js
 .gh-login.log
 
 # Editor
