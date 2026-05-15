@@ -21,6 +21,7 @@ import {
 } from '../util/schema.js';
 import {
   getCharacter,
+  getOnlineByPid,
   getOnlineBySocket,
   listOnline,
   login,
@@ -129,6 +130,33 @@ function pickCharacterForClient(c: CharacterPublic): CharacterPublic {
   return c;
 }
 
+// M14 修：上线/下线公告防抖。
+// - 玩家断线后 OFFLINE_GRACE_MS 内不发"下线了", 给重连留窗口。
+// - 玩家重新进入地图时, 如果在 grace 中, 取消 pending 下线通知 + 跳过"上线了"。
+// - 仅在玩家"真的从无到有"上线时, 广播一次。
+const OFFLINE_GRACE_MS = 5_000;
+const pendingOfflineByPid = new Map<number, NodeJS.Timeout>();
+
+function scheduleOfflineBroadcast(pid: number, name: string): void {
+  const old = pendingOfflineByPid.get(pid);
+  if (old) clearTimeout(old);
+  const t = setTimeout(() => {
+    pendingOfflineByPid.delete(pid);
+    // 5s 后再确认一次：如果 pid 已经重新在线了, 跳过
+    if (getOnlineByPid(pid)) return;
+    broadcastSystem(`${name} 下线了`);
+  }, OFFLINE_GRACE_MS);
+  pendingOfflineByPid.set(pid, t);
+}
+
+function clearPendingOffline(pid: number): boolean {
+  const t = pendingOfflineByPid.get(pid);
+  if (!t) return false;
+  clearTimeout(t);
+  pendingOfflineByPid.delete(pid);
+  return true;
+}
+
 export function installRouter(io: Server): void {
   attachIo(io);
   attachChatIo(io);
@@ -153,7 +181,10 @@ export function installRouter(io: Server): void {
         clearChatBucket(p.pid);
         tradeOnDisconnect(p.pid);
         dungeonOnDisconnect(p.pid);
-        broadcastSystem(`${p.name} 下线了`);
+        // M14 修：socket 重连/切图导致的短暂断开会触发 disconnect→connect 风暴，
+        // 之前每次都广播"X 下线了"+"X 上线了"两条系统公告，玩家右下角刷屏。
+        // 现在延迟 5s 再广播，期间若 pid 重新出现在 onlineByPid 即视为同会话重连，丢弃通知。
+        scheduleOfflineBroadcast(p.pid, p.name);
       }
       log.debug({ sid: socket.id, reason }, 'socket disconnected');
     });
@@ -219,6 +250,18 @@ export function installRouter(io: Server): void {
         if ((charSetChanged || charIndexChanged) && effectiveCharSet != null) {
           updateCharacterAppearance(session.pid, effectiveCharSet, effectiveCharIndex ?? 0);
         }
+        // M14 修：先抓取旧 player（若存在），用它的旧 mapId 离开旧地图。
+        // 旧实现先 markOnline 再 enterMap，会把 player.mapId 提前覆盖为新 mapId,
+        // 导致 enterMap 内的 `player.mapId !== mapId` 检查永远为假，旧地图的其他玩家
+        // 永远收不到 leave 事件，他们看到的 sprite 会卡在原地。
+        const previous = getOnlineBySocket(socket.id);
+        const previousMapId = previous?.mapId ?? 0;
+        const wasOnline = previous != null;
+        if (previous && previousMapId && previousMapId !== input.mapId) {
+          leaveMap(previous.pid, previousMapId);
+        }
+        // 若该 pid 在 grace 期内重连, 取消 pending "下线了" 通知, 同时视为重连而非真上线。
+        const wasReconnect = clearPendingOffline(session.pid);
         markOnline({
           pid: session.pid,
           accountId: session.accountId ?? 0,
@@ -237,7 +280,10 @@ export function installRouter(io: Server): void {
         const player = getOnlineBySocket(socket.id);
         if (!player) throw new AppError('INTERNAL', 'online state lost', 500);
         const { snapshot } = enterMap(player, input.mapId, input.x, input.y, input.d);
-        broadcastSystem(`${player.name} 上线了`);
+        // M14 修：仅在玩家「真正首次上线」时广播，避免每次切图都刷一次「上线了」公告。
+        if (!wasOnline && !wasReconnect) {
+          broadcastSystem(`${player.name} 上线了`);
+        }
         cb?.(okAck(snapshot));
       } catch (err) {
         sendError(socket, cb, err);

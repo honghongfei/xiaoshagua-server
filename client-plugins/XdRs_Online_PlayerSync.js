@@ -187,6 +187,7 @@
     if (!ss) return;
     if (Sync.others.has(view.pid)) removeOther(view.pid);
     const sp = new window.Sprite_OtherPlayer(view);
+    sp._lastSeenAt = Util.now();
     Sync.others.set(view.pid, sp);
     if (ss._characterSprites) ss._characterSprites.push(sp);
     if (ss._tilemap) ss._tilemap.addChild(sp);
@@ -216,7 +217,10 @@
     if (payload.move) {
       payload.move.forEach((m) => {
         const sp = Sync.others.get(m.pid);
-        if (sp) sp.applyRemoteMove(m.x, m.y, m.d);
+        if (sp) {
+          sp.applyRemoteMove(m.x, m.y, m.d);
+          sp._lastSeenAt = Util.now();
+        }
       });
     }
   });
@@ -227,6 +231,92 @@
 
   Net.on('__disconnect__', () => {
     clearAllOthers();
+  });
+
+  // ----------------------------------------------------------------
+  // M14 客户端兜底：定期 reconcile，防止服务端漏发 leave
+  // ----------------------------------------------------------------
+  // 即使 server 端有 bug 漏发 world.delta { leave: [...] }, 客户端也能在 30s 内
+  // 通过重拉一次 player.enterMap snapshot 自动校准本地 others 列表。
+  // 同时给"超过 90s 完全没动过"的 ghost 自动半透明 + 90s 后移除, 表示"可能离线"。
+  // ----------------------------------------------------------------
+  const RECONCILE_INTERVAL_MS = 30_000;
+  const STALE_FADE_MS = 60_000;   // 超过 60s 没动 → 半透明
+  const STALE_DROP_MS = 120_000;  // 超过 120s 没动 → 直接移除
+  let _reconcileTimer = null;
+  let _staleTimer = null;
+
+  function reconcileOthersFromSnapshot() {
+    if (!Core.isOnline()) return;
+    if (!(SceneManager._scene instanceof Scene_Map)) return;
+    // 30s 一次轻量校准: 直接 request 一次 player.enterMap（服务端把它当 no-op）,
+    // 然后用返回的 snapshot.others 与本地 Sync.others 做差集 (新增 + 删除), 不全删全建免闪烁。
+    const G2 = window.XdRsOnline;
+    let mapId = $gameMap.mapId();
+    if (G2 && G2.Dungeon && G2.Dungeon.current && typeof G2.Dungeon.current.virtualMapId === 'number') {
+      mapId = G2.Dungeon.current.virtualMapId;
+    }
+    const x = $gamePlayer.x | 0;
+    const y = $gamePlayer.y | 0;
+    const d = $gamePlayer.direction();
+    Net.request('player.enterMap', { mapId, x, y, d }, 5000)
+      .then((snap) => {
+        const remoteIds = new Set();
+        if (snap && snap.others) snap.others.forEach((v) => remoteIds.add(v.pid));
+        // 1. 本地多余的 (服务端 snapshot 没有) → 移除
+        for (const pid of Array.from(Sync.others.keys())) {
+          if (!remoteIds.has(pid)) removeOther(pid);
+        }
+        // 2. 服务端有的本地没有 → 新增
+        if (snap && snap.others) {
+          for (const v of snap.others) {
+            if (!Sync.others.has(v.pid)) addOther(v);
+          }
+        }
+      })
+      .catch((err) => Util.log('warn', 'reconcile failed:', err && err.message));
+  }
+
+  function pruneStaleOthers() {
+    const now = Util.now();
+    for (const [pid, sp] of Array.from(Sync.others.entries())) {
+      if (!sp || sp._lastSeenAt == null) continue;
+      const idle = now - sp._lastSeenAt;
+      if (idle >= STALE_DROP_MS) {
+        Util.log('debug', 'prune stale other pid=' + pid + ' idle=' + idle + 'ms');
+        removeOther(pid);
+      } else if (idle >= STALE_FADE_MS) {
+        // 半透明提示「可能掉线」
+        sp.opacity = 128;
+      } else {
+        sp.opacity = 255;
+      }
+    }
+  }
+
+  function startReconcileLoops() {
+    stopReconcileLoops();
+    _reconcileTimer = setInterval(reconcileOthersFromSnapshot, RECONCILE_INTERVAL_MS);
+    _staleTimer = setInterval(pruneStaleOthers, 5_000);
+  }
+  function stopReconcileLoops() {
+    if (_reconcileTimer) { clearInterval(_reconcileTimer); _reconcileTimer = null; }
+    if (_staleTimer) { clearInterval(_staleTimer); _staleTimer = null; }
+  }
+
+  // 进入 Scene_Map 时启动；离开时停止；断线时停止
+  const _Scene_Map_start_loops = Scene_Map.prototype.start;
+  Scene_Map.prototype.start = function () {
+    _Scene_Map_start_loops.call(this);
+    if (Core.isOnline()) startReconcileLoops();
+  };
+  const _Scene_Map_terminate_loops = Scene_Map.prototype.terminate;
+  Scene_Map.prototype.terminate = function () {
+    stopReconcileLoops();
+    _Scene_Map_terminate_loops.call(this);
+  };
+  Net.on('__disconnect__', () => {
+    stopReconcileLoops();
   });
 
   // ======================================================================

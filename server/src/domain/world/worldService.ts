@@ -53,8 +53,17 @@ export function enterMap(
   y: number,
   d: number,
 ): { snapshot: { mapId: number; others: ReturnType<MapState['snapshotFor']> } } {
+  // M14 修：双重防护——即使外部已经把 player.mapId 改成 input.mapId，
+  // 我们也兜底扫一遍所有 maps，把这个 pid 从其它 map.players 里清掉，避免泄漏。
   if (player.mapId && player.mapId !== mapId) {
     leaveMap(player.pid, player.mapId);
+  }
+  for (const m of maps.values()) {
+    if (m.mapId !== mapId && m.players.has(player.pid)) {
+      m.remove(player.pid);
+      const sock = io?.sockets.sockets.get(player.socketId);
+      if (sock) sock.leave(room(m.mapId));
+    }
   }
 
   const map = getOrCreate(mapId);
