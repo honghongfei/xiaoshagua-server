@@ -14,13 +14,29 @@
  * @default 28800
  *
  * @param botanyLifeSec
- * @text 每个 life 对应秒数
- * @desc 植物每长 1 life 需要多少真实秒。默认 288 = 4.8 分钟,
- *       让最长的 100-life 植物 (牡丹/古代小麦) 刚好 8 小时成熟,
- *       与离线补偿上限对齐。改成 60 = 1 分钟即恢复旧行为。
+ * @text 前台游玩时每个 life 对应秒数
+ * @desc 前台正常游玩时, 植物每长 1 life 需要多少真实秒。默认 60 = 1 分钟,
+ *       与单机原版完全一致。改大数会让前台游玩时植物长得更慢。
  * @type number
  * @min 1
- * @default 288
+ * @default 60
+ *
+ * @param offlineMaxLife
+ * @text 离线 maxOfflineGrowSec 最多补几个 life
+ * @desc 关游戏达到 maxOfflineGrowSec 上限时, 最多给植物加多少 life。
+ *       默认 100 让 8 小时离线刚好把最长 (100-life) 植物补到成熟。
+ *       注意: 这个上限是按"离线压缩比"算的, 数字越小压缩越狠 (离线长得越慢)。
+ * @type number
+ * @min 1
+ * @default 100
+ *
+ * @param foregroundDeltaMs
+ * @text 区分前台 / 离线的单次 delta 阈值(毫秒)
+ * @desc 单次 update() 的 wall-delta 中, 前 N 毫秒按前台速率, 之后按离线压缩速率。
+ *       默认 100 ms (覆盖 60fps 正常 16.6ms + 卡顿余量)。除非了解原理, 不建议改。
+ * @type number
+ * @min 50
+ * @default 100
  *
  * @param gatherRefreshIntervalSec
  * @text 采集点刷新间隔(秒)
@@ -78,11 +94,15 @@
  * 解决两个 UX 痛点 (与单机/联机均无关, 纯本地体验优化):
  *
  *  1. 植物生长不再依赖"游戏窗口在前台运行"
- *     - 旧: _lifeCount++ 每帧 +1, 60 秒 (3600 帧) 长一阶段, 关游戏=暂停
- *     - 新: 按 wall-clock 计时, 每个 life 对应 botanyLifeSec 秒 (默认 288 秒
- *           = 4.8 分钟), 让 100-life 植物 (牡丹/古代小麦) 正好 8 小时成熟
- *     - 关游戏的时间也算, 上限为 maxOfflineGrowSec (默认 8 小时), 与最长成熟
- *       时间完全对齐 → 离线 8 小时回来一定看到 100% 成熟
+ *     - 前台游玩: 与原版完全一致, 1 life = 60s wall-clock, 牡丹/古代小麦
+ *       100 life = 100 分钟成熟。在线挂着不亏。
+ *     - 后台 / 关游戏: 把"最多 maxOfflineGrowSec 秒离线时间"压缩成
+ *       "最多 offlineMaxLife 个 life", 默认 8 小时 → 100 life,
+ *       离线一次睡眠就能从种到收最长那株。压缩比 = 28800/(100*60) = 4.8。
+ *     - 区分依据: 单次 update() 的 wall-delta. 60fps 时每帧只有 16.6ms,
+ *       小于 foregroundDeltaMs (默认 100ms), 整段算前台 → 跟原版一样。
+ *       浏览器把 tab 降到 1Hz 时每次 1000ms, 前 100ms 算前台 + 后 900ms 算离线。
+ *       关游戏后第一次 update 的 delta 是关机时长, 几乎全部算离线。
  *
  *  2. 采集点不再要求"7 分钟连续在地图上"
  *     - 旧: 并行 CommonEvent 325 跑 41×wait(600 帧)≈7 分钟才翻开关
@@ -101,7 +121,9 @@
  *  Game_Botany.update():
  *    - 替换原版的"每帧 _lifeCount++"
  *    - 用 _lastUpdateTs (随存档保存) 计算与上次 update 的 wall-clock 差值
- *    - 累积到 _lifeCountMs >= ONE_STAGE_MS (= botanyLifeSec * 1000) 时调用一次 addLife()
+ *    - 单次 delta 拆 前台 (≤ foregroundDeltaMs) + 离线 两段
+ *    - 前台部分按 1 ms = 1 ms 计入; 离线部分按 OFFLINE_RATIO (默认 4.8) 压缩
+ *    - 累积到 _lifeCountMs >= ONE_STAGE_MS 时调用一次 addLife()
  *    - delta 上限是 maxOfflineGrowSec, 防止改本地时钟速生
  *    - delta < 0 (倒拨时钟) 取 0
  *
@@ -131,7 +153,9 @@
   const params = PluginManager.parameters(PLUGIN);
   const CFG = {
     maxOfflineGrowMs: Math.max(0, Number(params.maxOfflineGrowSec || 28800)) * 1000,
-    botanyLifeMs: Math.max(1, Number(params.botanyLifeSec || 288)) * 1000,
+    botanyLifeMs: Math.max(1, Number(params.botanyLifeSec || 60)) * 1000,
+    offlineMaxLife: Math.max(1, Number(params.offlineMaxLife || 100)),
+    foregroundDeltaMs: Math.max(50, Number(params.foregroundDeltaMs || 100)),
     gatherRefreshIntervalMs: Math.max(60, Number(params.gatherRefreshIntervalSec || 3600)) * 1000,
     range1Start: Math.max(1, Number(params.gatherSwitchRange1Start || 701)),
     range1End:   Math.max(1, Number(params.gatherSwitchRange1End   || 2979)),
@@ -151,10 +175,18 @@
     fn(prefix, ...args);
   };
 
-  // 1 life 对应的真实毫秒. 默认 288_000 (4.8min), 让 100-life 植物正好 8 小时.
-  // 旧版本是 60_000 (1min), 现在做成可配置.
-  // 注意: 不能在运行时被 0 取代 (Math.max 守底为 1ms), 否则 while 循环会死.
+  // 前台速率: 1 life = 60s wall-clock (与 RMMZ 原版 3600 帧 / 60fps 完全一致).
+  // 离线压缩: 把 maxOfflineGrowMs 这段时间最多压缩到 offlineMaxLife 个 life.
+  //          maxOffline=28800s, offlineMaxLife=100 → 离线每 288s 长 1 life.
+  // 区分前台 / 离线的依据: 单次 update() 的 wall-delta.
+  //   60fps 正常游玩 delta ~16.6ms → 全部按前台速率
+  //   后台 throttled / 关游戏 → delta 很大, 前 foregroundDeltaMs 算前台,
+  //   剩下算离线 (按比例换成毫秒后再加进 _lifeCountMs).
   const ONE_STAGE_MS = CFG.botanyLifeMs;
+  const OFFLINE_RATIO = CFG.maxOfflineGrowMs / (CFG.offlineMaxLife * ONE_STAGE_MS);
+  // OFFLINE_RATIO 默认 = 28800000 / (100 * 60000) = 4.8
+  // 即"1ms 真实离线时间" 在内部记账成 "1/4.8 ms 前台时间", 这样 wall 8h 离线
+  // → 内部累积 28800000/4.8 = 6_000_000ms = 100 life × 60_000ms, 正好 100 阶段.
 
   // ============================================================
   // 1. 植物 wall-clock 生长
@@ -170,9 +202,19 @@
         this._lifeCountMs = 0;
       };
 
-      // 完全替换 update: 用 wall-clock 替代 _lifeCount++ per frame
-      // 原版每 3600 帧 (=60秒) 长 1 life. 新版按 CFG.botanyLifeMs 长 1 life,
-      // 默认 288_000ms (4.8min) 让 100-life 植物正好 8 小时, 与离线上限对齐.
+      // 完全替换 update: 用 wall-clock 替代 _lifeCount++ per frame.
+      //
+      // 双速率: 单次 wall-delta 拆成两段
+      //   - 前 foregroundDeltaMs (默认 100ms) 按前台速率 1ms = 1ms 计入
+      //   - 之后的部分按离线压缩比例 OFFLINE_RATIO 计入 (1ms wall = 1/4.8 ms 内部)
+      //
+      // 60fps 正常前台: 每帧 delta ~16.6ms < 100ms, 行为完全等同原版.
+      // 后台 throttled (1Hz): delta ~1000ms, 前 100ms 算前台, 后 900ms 压缩为 ~187ms,
+      //   总计入 ~287ms, 等价于 ~ 0.287 倍前台速率, 比原版后台几乎不动好得多.
+      // 关游戏 8h 重开: delta ~28_800_000ms (会被 maxOfflineGrowMs clamp), 前 100ms
+      //   走前台 (无意义级别), 后 28_799_900ms 压缩为 28_799_900/4.8 = 5_999_979ms,
+      //   再加上 100ms 前台 = 5_999_979 + 100 ≈ 6_000_000ms = 100 个 life × 60_000ms,
+      //   正好 100 个阶段.
       Game_Botany.prototype.update = function () {
         // 已成熟, 不再生长, 但仍要刷新时间戳避免下次 update 算出巨大 delta
         if (this._life >= this._maxLife) {
@@ -188,10 +230,15 @@
         const delta = Math.max(0, Math.min(rawDelta, CFG.maxOfflineGrowMs));
         this._lastUpdateTs = now;
 
-        if (typeof this._lifeCountMs !== 'number') this._lifeCountMs = 0;
-        this._lifeCountMs += delta;
+        // 拆成 前台 + 离线 两段, 按各自速率换成内部毫秒
+        const fgMs = Math.min(delta, CFG.foregroundDeltaMs);
+        const bgMs = delta - fgMs;
+        const internalMs = fgMs + bgMs / OFFLINE_RATIO;
 
-        // 多阶段补偿 (离线 8h + lifeMs 288_000 时, 最多补 100 life, 正好 100 阶段)
+        if (typeof this._lifeCountMs !== 'number') this._lifeCountMs = 0;
+        this._lifeCountMs += internalMs;
+
+        // 多阶段消费
         while (this._lifeCountMs >= ONE_STAGE_MS && this._life < this._maxLife) {
           this._lifeCountMs -= ONE_STAGE_MS;
           this.addLife();
@@ -200,7 +247,11 @@
         if (this._life >= this._maxLife) this._lifeCountMs = 0;
       };
 
-      LOG('info', 'botany wall-clock compensation enabled, lifeMs=' + CFG.botanyLifeMs + ', maxOffline=' + CFG.maxOfflineGrowMs / 1000 + 's');
+      LOG('info',
+        'botany dual-rate enabled: foreground 1life=' + (ONE_STAGE_MS / 1000) + 's, ' +
+        'offline ' + (CFG.maxOfflineGrowMs / 1000) + 's→' + CFG.offlineMaxLife + ' life ' +
+        '(ratio=' + OFFLINE_RATIO.toFixed(3) + ')'
+      );
     }
   }
 
