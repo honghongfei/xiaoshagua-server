@@ -13,6 +13,15 @@
  * @min 0
  * @default 28800
  *
+ * @param botanyLifeSec
+ * @text 每个 life 对应秒数
+ * @desc 植物每长 1 life 需要多少真实秒。默认 288 = 4.8 分钟,
+ *       让最长的 100-life 植物 (牡丹/古代小麦) 刚好 8 小时成熟,
+ *       与离线补偿上限对齐。改成 60 = 1 分钟即恢复旧行为。
+ * @type number
+ * @min 1
+ * @default 288
+ *
  * @param gatherRefreshIntervalSec
  * @text 采集点刷新间隔(秒)
  * @desc 在线/离线累计 wall-clock 超过此时长就翻一次开关。默认 3600 = 1 小时。
@@ -70,7 +79,10 @@
  *
  *  1. 植物生长不再依赖"游戏窗口在前台运行"
  *     - 旧: _lifeCount++ 每帧 +1, 60 秒 (3600 帧) 长一阶段, 关游戏=暂停
- *     - 新: 按 wall-clock 计时, 关游戏 1 小时回来植物长 1 小时, 上限 8 小时
+ *     - 新: 按 wall-clock 计时, 每个 life 对应 botanyLifeSec 秒 (默认 288 秒
+ *           = 4.8 分钟), 让 100-life 植物 (牡丹/古代小麦) 正好 8 小时成熟
+ *     - 关游戏的时间也算, 上限为 maxOfflineGrowSec (默认 8 小时), 与最长成熟
+ *       时间完全对齐 → 离线 8 小时回来一定看到 100% 成熟
  *
  *  2. 采集点不再要求"7 分钟连续在地图上"
  *     - 旧: 并行 CommonEvent 325 跑 41×wait(600 帧)≈7 分钟才翻开关
@@ -89,7 +101,7 @@
  *  Game_Botany.update():
  *    - 替换原版的"每帧 _lifeCount++"
  *    - 用 _lastUpdateTs (随存档保存) 计算与上次 update 的 wall-clock 差值
- *    - 累积到 _lifeCountMs >= 60000 时调用一次原版 addLife()
+ *    - 累积到 _lifeCountMs >= ONE_STAGE_MS (= botanyLifeSec * 1000) 时调用一次 addLife()
  *    - delta 上限是 maxOfflineGrowSec, 防止改本地时钟速生
  *    - delta < 0 (倒拨时钟) 取 0
  *
@@ -119,6 +131,7 @@
   const params = PluginManager.parameters(PLUGIN);
   const CFG = {
     maxOfflineGrowMs: Math.max(0, Number(params.maxOfflineGrowSec || 28800)) * 1000,
+    botanyLifeMs: Math.max(1, Number(params.botanyLifeSec || 288)) * 1000,
     gatherRefreshIntervalMs: Math.max(60, Number(params.gatherRefreshIntervalSec || 3600)) * 1000,
     range1Start: Math.max(1, Number(params.gatherSwitchRange1Start || 701)),
     range1End:   Math.max(1, Number(params.gatherSwitchRange1End   || 2979)),
@@ -138,7 +151,10 @@
     fn(prefix, ...args);
   };
 
-  const ONE_STAGE_MS = 60 * 1000;  // 原版 3600 帧 / 60fps = 60 秒 = 1 阶段
+  // 1 life 对应的真实毫秒. 默认 288_000 (4.8min), 让 100-life 植物正好 8 小时.
+  // 旧版本是 60_000 (1min), 现在做成可配置.
+  // 注意: 不能在运行时被 0 取代 (Math.max 守底为 1ms), 否则 while 循环会死.
+  const ONE_STAGE_MS = CFG.botanyLifeMs;
 
   // ============================================================
   // 1. 植物 wall-clock 生长
@@ -155,7 +171,8 @@
       };
 
       // 完全替换 update: 用 wall-clock 替代 _lifeCount++ per frame
-      // 原版会 3600 帧 → addLife(), 等价于 60000ms → addLife()
+      // 原版每 3600 帧 (=60秒) 长 1 life. 新版按 CFG.botanyLifeMs 长 1 life,
+      // 默认 288_000ms (4.8min) 让 100-life 植物正好 8 小时, 与离线上限对齐.
       Game_Botany.prototype.update = function () {
         // 已成熟, 不再生长, 但仍要刷新时间戳避免下次 update 算出巨大 delta
         if (this._life >= this._maxLife) {
@@ -174,7 +191,7 @@
         if (typeof this._lifeCountMs !== 'number') this._lifeCountMs = 0;
         this._lifeCountMs += delta;
 
-        // 多阶段补偿 (离线 8 小时一次性长 8 阶段)
+        // 多阶段补偿 (离线 8h + lifeMs 288_000 时, 最多补 100 life, 正好 100 阶段)
         while (this._lifeCountMs >= ONE_STAGE_MS && this._life < this._maxLife) {
           this._lifeCountMs -= ONE_STAGE_MS;
           this.addLife();
@@ -183,7 +200,7 @@
         if (this._life >= this._maxLife) this._lifeCountMs = 0;
       };
 
-      LOG('info', 'botany wall-clock compensation enabled, max=' + CFG.maxOfflineGrowMs / 1000 + 's');
+      LOG('info', 'botany wall-clock compensation enabled, lifeMs=' + CFG.botanyLifeMs + ', maxOffline=' + CFG.maxOfflineGrowMs / 1000 + 's');
     }
   }
 
