@@ -94,6 +94,22 @@ export const InventoryUse = z.object({
   count: z.number().int().positive().default(1),
 });
 
+// inventory.replace: 全量覆盖资产 (SaveMigrate 上传本地存档时调用)
+// 上限: 单次不超过 5000 条 entry, 防止滥用.
+export const InventoryReplace = z.object({
+  gold: z.number().int().min(0),
+  items: z
+    .array(
+      z.object({
+        kind: ItemKind,
+        dataId: z.number().int().positive(),
+        count: z.number().int().min(0),
+      }),
+    )
+    .max(5000),
+  reason: z.string().max(32).optional(),
+});
+
 export const StateSetSwitch = z.object({
   id: z.number().int().min(1),
   value: z.union([z.literal(0), z.literal(1)]),
@@ -152,6 +168,7 @@ export type ChatSendInput = z.infer<typeof ChatSend>;
 export type InventoryGainGoldInput = z.infer<typeof InventoryGainGold>;
 export type InventoryGainItemInput = z.infer<typeof InventoryGainItem>;
 export type InventoryUseInput = z.infer<typeof InventoryUse>;
+export type InventoryReplaceInput = z.infer<typeof InventoryReplace>;
 export type StateSetSwitchInput = z.infer<typeof StateSetSwitch>;
 export type StateSetVarInput = z.infer<typeof StateSetVar>;
 export type SaveUploadInput = z.infer<typeof SaveUpload>;

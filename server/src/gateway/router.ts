@@ -9,6 +9,7 @@ import {
   ChatSend,
   InventoryGainGold,
   InventoryGainItem,
+  InventoryReplace,
   InventoryUse,
   PidOnly,
   PidWithKind,
@@ -60,6 +61,7 @@ import {
 import {
   gainGold as invGainGold,
   gainItem as invGainItem,
+  replaceInventory as invReplaceInventory,
   snapshot as invSnapshot,
   useItem as invUseItem,
 } from '../domain/inventory/inventoryService.js';
@@ -447,6 +449,22 @@ export function installRouter(io: Server): void {
         socket.emit('inventory.delta', {
           items: [{ kind: input.kind, dataId: input.dataId, deltaCount: result.appliedDelta, newCount: result.newTotal }],
         });
+        cb?.(okAck(result));
+      } catch (err) { sendError(socket, cb, err); }
+    });
+
+    // inventory.replace: 全量覆盖. 配合 SaveMigrate 上传时把本地存档里的
+    // _gold / _items / _weapons / _armors 灌进权威表, 防止下次 reconcile
+    // 把本地资产清零. 不广播 inventory.delta (调用者通常会立刻退出菜单回标题).
+    socket.on('inventory.replace', (raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const s = requireAuth(socket);
+        const input = parse(InventoryReplace, raw);
+        const result = invReplaceInventory(s.pid, { gold: input.gold, items: input.items }, input.reason);
+        // 给当前 socket 推一次新 snapshot 方便客户端立刻刷新, 但不向其他人广播.
+        socket.emit('inventory.delta', { gold: 0, replaced: true, newGold: result.gold });
         cb?.(okAck(result));
       } catch (err) { sendError(socket, cb, err); }
     });

@@ -140,6 +140,27 @@
   }
   function reconcileLocal(snap) {
     if (!snap) return;
+    // 防御: 服务端权威表为空 (gold=0 + 0 件物品), 但本地内存里资产非空时,
+    // 不做覆盖. 这种情况通常是迁移流程不完整 (老存档 blob 上传了, 但 gold/inventory
+    // 表没同步), 让 reconcile 静默清零会直接抹掉玩家的钻石和金币.
+    // 修复历史详见: server/src/domain/inventory/inventoryService.ts replaceInventory 注释.
+    const snapEmpty = (snap.gold | 0) === 0 && (!Array.isArray(snap.items) || snap.items.length === 0);
+    if (snapEmpty) {
+      const localGold = ($gameParty && $gameParty._gold) | 0;
+      const localItemCount = $gameParty
+        ? Object.keys($gameParty._items || {}).length +
+          Object.keys($gameParty._weapons || {}).length +
+          Object.keys($gameParty._armors || {}).length
+        : 0;
+      if (localGold > 0 || localItemCount > 0) {
+        Util.log(
+          'warn',
+          'inventory snapshot suspicious empty (server gold=0, items=0) but local has gold=' +
+            localGold + ' items=' + localItemCount + ', skip reconcile to protect assets'
+        );
+        return;
+      }
+    }
     withSuppressSync(() => {
       if (typeof snap.gold === 'number' && typeof $gameParty._gold === 'number' && $gameParty._gold !== snap.gold) {
         Util.log('info', 'reconcile gold local=' + $gameParty._gold + ' server=' + snap.gold);

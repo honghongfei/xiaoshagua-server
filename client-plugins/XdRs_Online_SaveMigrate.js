@@ -207,9 +207,49 @@
   }
 
   // 上传本地槽到云端
+  // 关键: 只写 savefile_cloud blob 是不够的 — 服务端的 character.gold / inventory
+  // 表是金币和物品的"权威源", reconcile 会把它直接刷到 $gameParty._gold. 老玩家
+  // 的本地存档第一次同步时这两张表是空的, 如果只 save.upload 不做 inventory.replace,
+  // 下次进游戏 Scene_Map.start 拉 inventory.snapshot 会拿到 gold=0 / items=[], 把
+  // 内存里刚从 blob 加载的 _gold (含【钻石】之类的关键物品) 全部清零, 30s 后
+  // SaveCloud 自动镜像把这份归零状态推回云端, 钻石和金币就这么永久没了.
+  //
+  // 修复: 上传前先从存档 contents 里抽出 _gold / _items / _weapons / _armors,
+  //       同步调用 inventory.replace 全量覆盖权威表; 任一调用失败都视为整体失败,
+  //       让用户看到错误而不是默默丢档.
   async function uploadSlotToCloud(savefileId) {
-    const contentsStr = await readLocalSlotAsString(savefileId);
-    if (typeof contentsStr !== 'string') throw new Error('本地存档为空');
+    const saveName = DataManager.makeSavename(savefileId);
+    const contents = await StorageManager.loadObject(saveName);
+    if (!contents || !contents.party) throw new Error('本地存档为空或损坏');
+    // 1. 消毒音频字段 (与之前保持一致)
+    if (contents.system) {
+      const empty = { name: '', volume: 0, pitch: 0, pan: 0, pos: 0 };
+      if (contents.system._bgmOnSave == null || typeof contents.system._bgmOnSave !== 'object') {
+        contents.system._bgmOnSave = empty;
+      }
+      if (contents.system._bgsOnSave == null || typeof contents.system._bgsOnSave !== 'object') {
+        contents.system._bgsOnSave = { name: '', volume: 0, pitch: 0, pan: 0, pos: 0 };
+      }
+    }
+    // 2. 从 contents.party 抽资产, 准备 inventory.replace 载荷
+    const party = contents.party || {};
+    const gold = Math.max(0, (party._gold | 0));
+    const items = [];
+    const pushBucket = (bucket, kind) => {
+      if (!bucket || typeof bucket !== 'object') return;
+      for (const idStr of Object.keys(bucket)) {
+        const dataId = Number(idStr);
+        const count = bucket[idStr] | 0;
+        if (!Number.isInteger(dataId) || dataId <= 0 || count <= 0) continue;
+        items.push({ kind, dataId, count });
+      }
+    };
+    pushBucket(party._items, 'item');
+    pushBucket(party._weapons, 'weapon');
+    pushBucket(party._armors, 'armor');
+
+    // 3. 序列化整份存档
+    const contentsStr = JsonEx.stringify(contents);
     const byteLen = (typeof Blob !== 'undefined')
       ? new Blob([contentsStr]).size
       : contentsStr.length * 2; // UTF-16 估算
@@ -224,7 +264,16 @@
       playtime: info.playtime || '',
       timestamp: info.timestamp || Date.now(),
       uploadedAt: Date.now(),
+      goldSnapshot: gold,
+      itemCountSnapshot: items.length,
     };
+
+    // 4. 先写权威资产 (失败直接抛错, blob 都不上传)
+    Util.log('info', 'migrate uploading inventory: gold=' + gold + ' items=' + items.length);
+    const invRes = await Net.request('inventory.replace', { gold, items, reason: 'migrate' }, 12000);
+    Util.log('info', 'migrate inventory replaced: ' + JSON.stringify(invRes));
+
+    // 5. 再写 blob
     return Net.request('save.upload', { contents: contentsStr, meta }, 12000);
   }
 

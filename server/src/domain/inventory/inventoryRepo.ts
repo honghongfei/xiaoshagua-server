@@ -70,3 +70,32 @@ export function tx<T>(fn: (db: DB) => T): T {
   const db = openDb();
   return withTx(db, fn);
 }
+
+// 全量覆盖 helper (用于 inventoryService.replaceInventory).
+// 调用方必须自己包 tx, 这两个函数只接收 db.
+export function setGold(db: DB, characterId: number, gold: number): void {
+  db.prepare('UPDATE character SET gold = ?, updated_at = ? WHERE id = ?').run(
+    gold,
+    Date.now(),
+    characterId,
+  );
+}
+
+export function clearInventory(db: DB, characterId: number): void {
+  db.prepare('DELETE FROM inventory WHERE character_id = ?').run(characterId);
+}
+
+export function upsertInventory(
+  db: DB,
+  characterId: number,
+  kind: ItemKind,
+  dataId: number,
+  count: number,
+): void {
+  // 在 clearInventory 之后调用, 所以这里直接 INSERT 即可, 但保留 ON CONFLICT
+  // 以便支持单点 patch 用法.
+  db.prepare(
+    `INSERT INTO inventory (character_id, kind, data_id, count) VALUES (?, ?, ?, ?)
+     ON CONFLICT(character_id, kind, data_id) DO UPDATE SET count = excluded.count`,
+  ).run(characterId, kind, dataId, count);
+}
