@@ -4,10 +4,11 @@ import * as repo from './inventoryRepo.js';
 
 export type ItemKind = repo.ItemKind;
 
-// 与 RMMZ 默认 Game_Party.maxGold() (99,999,999, 8 位) 对齐.
+// 9 位数上限. RMMZ 默认 Game_Party.maxGold() 是 99,999,999 (8 位), 服务端给 1 位
+// 余量做缓冲, 防止后续若有插件提高客户端上限时再次被 clamp.
 // 老版本写成 9_999_999 (7 位) 会把单机里超过千万的存档上传时硬 clamp,
 // 玩家钱被吞一位. 已经被吃掉的金币要靠玩家本地 file*.rmmzsave 重新上传补回.
-const GOLD_CAP = 99_999_999;
+const GOLD_CAP = 999_999_999;
 const ITEM_CAP = 9_999;
 
 export interface InventorySnapshot {
