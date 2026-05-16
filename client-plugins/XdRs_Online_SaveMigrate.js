@@ -223,6 +223,37 @@
   Migrate.maxSlots = maxSlots;
 
   // ============================================================
+  // 1.5 健壮 onAfterLoad: 兜底坏存档里的 null _bgmOnSave / _bgsOnSave
+  // ============================================================
+  // 现象: 玩家从云端下载存档读取进游戏 → Cannot read property 'name' of null
+  //       at AudioManager.playBgm (rmmz_managers.js:1121)
+  //       at Game_System.onAfterLoad (rmmz_objects.js:353)
+  //
+  // 根因: 某次 saveGame 时 $gameSystem._bgmOnSave 被序列化成 null (各种原因都可能 -
+  //   云端旧存档、初始云存档、云存档重写时 AudioManager 状态异常等), onAfterLoad
+  //   把 null 直接传给 playBgm, playBgm 立刻读 .name 炸.
+  //
+  // 修复策略: hook Game_System.onAfterLoad, 把 null 变成空音频对象 ({ name:'', vol:0, pitch:0 })
+  //   等价于"没在播任何 BGM" 的标准状态. 这样老坏存档也能进游戏.
+  //   完成后顺手把 _bgmOnSave / _bgsOnSave 修正成空对象写回, 下次保存就不再坏了.
+  if (Game_System && Game_System.prototype && !Game_System.prototype._xsg_safe_onAfterLoad) {
+    const _onAfterLoad = Game_System.prototype.onAfterLoad;
+    Game_System.prototype.onAfterLoad = function () {
+      const empty = { name: '', volume: 0, pitch: 0, pan: 0, pos: 0 };
+      if (this._bgmOnSave == null || typeof this._bgmOnSave !== 'object') {
+        console.warn('[SaveMigrate] _bgmOnSave was', this._bgmOnSave, '→ replaced with empty audio object');
+        this._bgmOnSave = empty;
+      }
+      if (this._bgsOnSave == null || typeof this._bgsOnSave !== 'object') {
+        console.warn('[SaveMigrate] _bgsOnSave was', this._bgsOnSave, '→ replaced with empty audio object');
+        this._bgsOnSave = { name: '', volume: 0, pitch: 0, pan: 0, pos: 0 };
+      }
+      return _onAfterLoad.call(this);
+    };
+    Game_System.prototype._xsg_safe_onAfterLoad = true;
+  }
+
+  // ============================================================
   // 2. DOM 面板
   // ============================================================
   let panelRoot = null;
