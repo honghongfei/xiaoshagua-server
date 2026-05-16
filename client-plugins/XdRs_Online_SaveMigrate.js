@@ -117,20 +117,37 @@
     const contents = JsonEx.parse(contentsString);
     if (!contents) throw new Error('云存档解析失败');
     const saveName = DataManager.makeSavename(savefileId);
+    // 1. 主操作: 把存档文件写到磁盘. 这一步成功即代表"下载完成", 后面 globalInfo
+    //    刷新只是为了让标题界面读取列表能显示预览(角色头像/时长), 失败也不影响读档.
     await StorageManager.saveObject(saveName, contents);
-    // 刷新 globalInfo, 让标题/读取界面立即看到这一槽的新存档
+    // 2. Best-effort 刷新预览; 任何异常都吞掉, 不让用户看到下载报错.
     try {
-      DataManager._globalInfo[savefileId] = buildInfoFromContents(contents);
-      DataManager.saveGlobalInfo();
+      const info = buildInfoFromContents(contents);
+      if (info && DataManager._globalInfo) {
+        DataManager._globalInfo[savefileId] = info;
+        try { DataManager.saveGlobalInfo(); } catch (e) {
+          Util.log('warn', 'saveGlobalInfo failed (save file already on disk):', e && e.message);
+        }
+      }
     } catch (e) {
-      Util.log('warn', 'globalInfo refresh failed:', e && e.message);
+      Util.log('warn', 'globalInfo refresh failed (save file already on disk):', e && e.message);
     }
   }
 
   // 从 contents 派生 globalInfo. 借助临时 $game* 状态计算, 算完恢复.
-  // 这里依赖 DataManager.makeSavefileInfo() 的标准行为.
+  // 任何一步出错都返回 fallback minimal info, 至少让槽位显示出来.
   // 调用时机受限: 只在 Scene_Title / Scene_OnlineMenu 时(无活跃游戏状态)运行.
   function buildInfoFromContents(contents) {
+    // 最小可用 fallback. 老存档 / 坏存档 / 数据库变动都会让原版 makeSavefileInfo 抛错,
+    // 失败时用这个让"读取游戏"列表至少能列出该槽.
+    const fallback = {
+      title: ($dataSystem && $dataSystem.gameTitle) || '云存档',
+      characters: [],
+      faces: [],
+      playtime: '?',
+      timestamp: Date.now(),
+    };
+
     const snap = {
       $gameSystem:       window.$gameSystem,
       $gameScreen:       window.$gameScreen,
@@ -146,19 +163,15 @@
     try {
       DataManager.createGameObjects();
       DataManager.extractSaveContents(contents);
-      // 用原生 makeSavefileInfo, 失败时降级用最简结构, 避免坏存档卡住整个迁移流程
-      try {
-        return DataManager.makeSavefileInfo();
-      } catch (e) {
-        Util.log('warn', 'makeSavefileInfo threw, using fallback:', e && e.message);
-        return {
-          title: ($dataSystem && $dataSystem.gameTitle) || '',
-          characters: [],
-          faces: [],
-          playtime: '?',
-          timestamp: Date.now(),
-        };
-      }
+      // 关键: 移除 invalid actor 引用, 否则 makeSavefileInfo 里的
+      // $gameParty.battleMembers().map(a => a.characterName()) 会对 null 取 .name
+      try { DataManager.correctDataErrors(); } catch (_) { /* ignore */ }
+      const info = DataManager.makeSavefileInfo();
+      if (info && typeof info === 'object') return info;
+      return fallback;
+    } catch (e) {
+      Util.log('warn', 'makeSavefileInfo threw, using minimal fallback:', e && e.message);
+      return fallback;
     } finally {
       // 恢复, 不污染外部状态
       for (const k of Object.keys(snap)) window[k] = snap[k];
