@@ -106,9 +106,20 @@
   }
 
   // 把指定槽位的本地存档读成 JsonEx 字符串 (与 SaveCloud 对齐的格式)
+  // 顺便消毒: 若本地老存档里 system._bgmOnSave/_bgsOnSave 已经是 null,
+  //          这里就在内存里改成空音频对象再 stringify, 避免把坏数据传上云.
   async function readLocalSlotAsString(savefileId) {
     const saveName = DataManager.makeSavename(savefileId);
     const contents = await StorageManager.loadObject(saveName);
+    if (contents && contents.system) {
+      const empty = { name: '', volume: 0, pitch: 0, pan: 0, pos: 0 };
+      if (contents.system._bgmOnSave == null || typeof contents.system._bgmOnSave !== 'object') {
+        contents.system._bgmOnSave = empty;
+      }
+      if (contents.system._bgsOnSave == null || typeof contents.system._bgsOnSave !== 'object') {
+        contents.system._bgsOnSave = { name: '', volume: 0, pitch: 0, pan: 0, pos: 0 };
+      }
+    }
     return JsonEx.stringify(contents);
   }
 

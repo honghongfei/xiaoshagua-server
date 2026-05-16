@@ -28,12 +28,21 @@
   const Cloud = (G.SaveCloud = G.SaveCloud || {});
 
   // ---------- Hook saveGame (H3 修：返回值与服端 ack 真正一致) ----------
+  // M14b 修: 保存前必须先调 $gameSystem.onBeforeSave(),
+  //   原因: RMMZ 的 _bgmOnSave / _bgsOnSave 初始为 null, 只有 onBeforeSave 里
+  //   AudioManager.saveBgm() 才会写成合法 audio object. 旧版直接 makeSaveContents
+  //   会把 null 序列化进存档, 下次读这份云档时 onAfterLoad 把 null 传给 playBgm 炸.
   const _DM_saveGame = DataManager.saveGame;
   DataManager.saveGame = function (savefileId) {
     if (!Core.isOnline()) return _DM_saveGame.call(this, savefileId);
     let contents;
     let meta;
     try {
+      // 与 RMMZ 原生 Scene_Save.executeSave 行为对齐
+      if ($gameSystem) {
+        try { $gameSystem.setSavefileId(savefileId); } catch (e) { /* ignore */ }
+        try { $gameSystem.onBeforeSave(); } catch (e) { Util.log('warn', 'onBeforeSave threw:', e && e.message); }
+      }
       contents = JsonEx.stringify(this.makeSaveContents());
       meta = {
         savefileId,
