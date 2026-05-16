@@ -138,27 +138,36 @@
     suppressSync = true;
     try { fn(); } finally { suppressSync = false; }
   }
-  function reconcileLocal(snap) {
+  function reconcileLocal(snap, opts) {
     if (!snap) return;
+    const fullReplace = !!(opts && opts.fullReplace);
     // 防御: 服务端权威表为空 (gold=0 + 0 件物品), 但本地内存里资产非空时,
     // 不做覆盖. 这种情况通常是迁移流程不完整 (老存档 blob 上传了, 但 gold/inventory
     // 表没同步), 让 reconcile 静默清零会直接抹掉玩家的钻石和金币.
     // 修复历史详见: server/src/domain/inventory/inventoryService.ts replaceInventory 注释.
-    const snapEmpty = (snap.gold | 0) === 0 && (!Array.isArray(snap.items) || snap.items.length === 0);
-    if (snapEmpty) {
-      const localGold = ($gameParty && $gameParty._gold) | 0;
-      const localItemCount = $gameParty
-        ? Object.keys($gameParty._items || {}).length +
-          Object.keys($gameParty._weapons || {}).length +
-          Object.keys($gameParty._armors || {}).length
-        : 0;
-      if (localGold > 0 || localItemCount > 0) {
-        Util.log(
-          'warn',
-          'inventory snapshot suspicious empty (server gold=0, items=0) but local has gold=' +
-            localGold + ' items=' + localItemCount + ', skip reconcile to protect assets'
-        );
-        return;
+    // 例外: fullReplace=true 时跳过保护. 调用方 (例如交易完成后的 reconcile) 已经
+    //       明确知道服务端是权威源, 即使快照"看起来"是空 也应该执行覆盖. 否则交易
+    //       把全部物品给了对方, 服务端 inventory 那条 row 被 DELETE → snap.items 不
+    //       含该 dataId → 老的"按 snap 写入"逻辑不会清掉本地残留 bucket → 玩家下次
+    //       开交易时会看到 "持有:1" 的鬼物品, 提交时服务端找不到行直接拒绝
+    //       NOT_ENOUGH_ITEM: need 1 of item#8.
+    if (!fullReplace) {
+      const snapEmpty = (snap.gold | 0) === 0 && (!Array.isArray(snap.items) || snap.items.length === 0);
+      if (snapEmpty) {
+        const localGold = ($gameParty && $gameParty._gold) | 0;
+        const localItemCount = $gameParty
+          ? Object.keys($gameParty._items || {}).length +
+            Object.keys($gameParty._weapons || {}).length +
+            Object.keys($gameParty._armors || {}).length
+          : 0;
+        if (localGold > 0 || localItemCount > 0) {
+          Util.log(
+            'warn',
+            'inventory snapshot suspicious empty (server gold=0, items=0) but local has gold=' +
+              localGold + ' items=' + localItemCount + ', skip reconcile to protect assets'
+          );
+          return;
+        }
       }
     }
     withSuppressSync(() => {
@@ -168,6 +177,33 @@
       }
       if (!Array.isArray(snap.items)) return;
       const buckets = { item: $gameParty._items, weapon: $gameParty._weapons, armor: $gameParty._armors };
+      // fullReplace 时先建立 server 持有的 (kind, dataId) 集合; 本地有但服务端没有
+      // 的条目要被设成 0, 否则交易掉光的物品会作为 "鬼条目" 留在本地.
+      // 注意: 仅在 fullReplace=true 时才做"清扫", 默认行为保持向后兼容.
+      if (fullReplace) {
+        const serverHas = {
+          item: new Set(),
+          weapon: new Set(),
+          armor: new Set(),
+        };
+        for (const it of snap.items) {
+          if (!it) continue;
+          if (serverHas[it.kind]) serverHas[it.kind].add(it.dataId);
+        }
+        for (const kind of Object.keys(buckets)) {
+          const bucket = buckets[kind];
+          if (!bucket) continue;
+          for (const idStr of Object.keys(bucket)) {
+            const id = Number(idStr);
+            if (!serverHas[kind].has(id)) {
+              if ((bucket[idStr] | 0) !== 0) {
+                Util.log('debug', 'reconcile drop ghost ' + kind + '#' + id + ' local=' + bucket[idStr]);
+                bucket[idStr] = 0;
+              }
+            }
+          }
+        }
+      }
       for (const it of snap.items) {
         const bucket = buckets[it.kind];
         if (!bucket || it.dataId == null) continue;

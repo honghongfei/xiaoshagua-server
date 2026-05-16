@@ -60,6 +60,19 @@
     ].join('');
     document.body.appendChild(modal);
 
+    // 防止 modal 上的指针事件冒泡到 document 触发 RMMZ TouchInput 的"地图点击-寻路"。
+    // RMMZ 的 TouchInput._setupEventHandlers 直接在 document 上挂 mousedown / mouseup /
+    // touchstart / touchend, 所以 DOM 弹窗必须把 pointer 事件链整个截断, 否则玩家点
+    // "锁定 / 确认 / 取消" 按钮时角色会向那个屏幕坐标走过去.
+    [
+      'mousedown', 'mouseup', 'click',
+      'pointerdown', 'pointerup',
+      'touchstart', 'touchend',
+      'wheel', 'contextmenu',
+    ].forEach((evt) => {
+      modal.addEventListener(evt, (e) => { e.stopPropagation(); }, evt === 'touchstart' || evt === 'touchend' || evt === 'wheel' ? { passive: false } : undefined);
+    });
+
     modal.addEventListener('keydown', (e) => e.stopPropagation());
     modal.querySelector('button[data-act=close]').addEventListener('click', () => endLocal('user_close'));
     modal.querySelector('button[data-act=cancel]').addEventListener('click', () => {
@@ -208,6 +221,16 @@
       '</div>',
     ].join('');
     document.body.appendChild(pickerRoot);
+    // 同样防止指针事件穿透到 RMMZ canvas 触发寻路.
+    [
+      'mousedown', 'mouseup', 'click',
+      'pointerdown', 'pointerup',
+      'touchstart', 'touchend',
+      'wheel', 'contextmenu',
+    ].forEach((evt) => {
+      pickerRoot.addEventListener(evt, (e) => { e.stopPropagation(); }, evt === 'touchstart' || evt === 'touchend' || evt === 'wheel' ? { passive: false } : undefined);
+    });
+    pickerRoot.addEventListener('keydown', (e) => e.stopPropagation());
     pickerRoot.querySelector('button[data-act=close-picker]').addEventListener('click', () => {
       pickerRoot.style.display = 'none';
     });
@@ -245,10 +268,14 @@
         const key = row.dataset.row;
         const [kind, idStr] = key.split('#');
         const dataId = Number(idStr);
-        const have = list.find((x) => x.kind === kind && x.dataId === dataId).have;
+        // 防御: list 里可能并不包含某个 row (理论上不会, 但万一 picker 渲染期间
+        // 玩家 _items 又被 reconcile 改了); 直接读 .have 会在条目缺失时炸成
+        // "Cannot read property 'have' of undefined".
+        const owned = list.find((x) => x.kind === kind && x.dataId === dataId);
+        const have = owned ? owned.have : 0;
         row.querySelector('button[data-act=set]').addEventListener('click', () => {
           const inp = row.querySelector('input[data-amt]');
-          let amount = Number(inp.value) | 0;
+          let amount = inp ? Number(inp.value) | 0 : 0;
           if (amount < 0) amount = 0;
           if (amount > have) amount = have;
           const items = (Trade.current.mySide.items || []).slice().filter((it) => !(it.kind === kind && it.dataId === dataId));
@@ -330,12 +357,18 @@
     if (Trade.current && Trade.current.tradeId === e.tradeId) {
       const text = e.ok ? '交易成功' : ('交易结束: ' + (e.reason || ''));
       setStatus(text);
-      // 交易成功后立即拉一次 inventory.snapshot 同步本地 (服端原子转账已完成)
+      // 交易成功后立即拉一次 inventory.snapshot 同步本地 (服端原子转账已完成).
+      // 用 fullReplace=true: 服端 inventory 表对清零物品会 DELETE 掉那行, snapshot
+      // 不会包含该 dataId. 默认 reconcile 是"按 snap 写入", 不会清掉本地多余 key,
+      // 这会导致玩家把某物品全部交易出去后, 本地 _items[id] 仍残留旧 count, 下次开
+      // 交易看到鬼物品 → 提交时服务端找不到行 → NOT_ENOUGH_ITEM.
       if (e.ok && G.Inv && typeof G.Inv.reconcileLocal === 'function') {
         Net.request('inventory.snapshot', {}, 4000)
-          .then((snap) => G.Inv.reconcileLocal(snap))
+          .then((snap) => G.Inv.reconcileLocal(snap, { fullReplace: true }))
           .catch(() => {});
       }
+      // 关掉物品挑选浮层 (如果还开着), 防止用户在交易已结束后还误以为可以继续操作
+      if (pickerRoot) pickerRoot.style.display = 'none';
       setTimeout(() => endLocal(e.reason || 'done'), 1200);
     }
   });
