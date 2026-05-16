@@ -15,10 +15,10 @@
  *
  * @param gatherRefreshIntervalSec
  * @text 采集点刷新间隔(秒)
- * @desc 进入地图时若距上次刷新超过此时长则立即翻开关。默认 420 = 7 分钟, 与 CommonEvent 325 一致。
+ * @desc 在线/离线累计 wall-clock 超过此时长就翻一次开关。默认 3600 = 1 小时。
  * @type number
- * @min 30
- * @default 420
+ * @min 60
+ * @default 3600
  *
  * @param gatherSwitchRange1Start
  * @text 第一段开关 ID 起
@@ -74,8 +74,15 @@
  *
  *  2. 采集点不再要求"7 分钟连续在地图上"
  *     - 旧: 并行 CommonEvent 325 跑 41×wait(600 帧)≈7 分钟才翻开关
- *     - 新: 进 Scene_Map 时若距上次刷新已经过去 7 分钟, 立即翻开关
- *     - 旧的 CommonEvent 325 仍在跑, 双保险, setSwitch 幂等无副作用
+ *           而且必须保持游戏在前台、地图在 update, 离线/最小化都不算
+ *     - 新: 三路并行触发, 任一满足就刷:
+ *            (a) Scene_Map.start 时若 wall-clock 距上次刷新 ≥ 间隔, 立即刷
+ *            (b) 在地图上每 60 秒轮询一次, AFK 挂机也能触发
+ *            (c) 旧 CommonEvent 325 保留, 双保险
+ *     - 间隔默认 1 小时 (gatherRefreshIntervalSec=3600), 比原版 7 分钟更保守
+ *     - 翻开关方向: 与 CommonEvent 325 严格对齐, params[2]=1 => setValue(id, false),
+ *       让消耗过的资源点 conditions 不再满足, 翻回有资源的页
+ *     - 开关是全局的, 翻一次 = 全地图所有 *采集点* 同时回到有页面状态
  *
  * 工作机制
  * ----------------------------------------------------------------------------
@@ -86,10 +93,12 @@
  *    - delta 上限是 maxOfflineGrowSec, 防止改本地时钟速生
  *    - delta < 0 (倒拨时钟) 取 0
  *
- *  Scene_Map.start (gather refresh):
+ *  Scene_Map.start + 每 60 秒地图轮询 (gather refresh):
  *    - 检查 $gameSystem._lastGatherRefreshTs (随存档保存)
- *    - 若间隔 >= gatherRefreshIntervalSec, setSwitch(701..2979 + 4003..4090, true)
+ *    - 若间隔 >= gatherRefreshIntervalSec, setSwitch(701..2979, false) +
+ *      setSwitch(4003..4090, false), 与 CommonEvent 325 行为完全一致
  *    - 立即更新时间戳避免连续切图刷过头
+ *    - 60 秒轮询确保 AFK 玩家不离开地图也能在 wall-clock 到点时刷
  *
  * 兼容性
  * ----------------------------------------------------------------------------
@@ -110,7 +119,7 @@
   const params = PluginManager.parameters(PLUGIN);
   const CFG = {
     maxOfflineGrowMs: Math.max(0, Number(params.maxOfflineGrowSec || 28800)) * 1000,
-    gatherRefreshIntervalMs: Math.max(30, Number(params.gatherRefreshIntervalSec || 420)) * 1000,
+    gatherRefreshIntervalMs: Math.max(60, Number(params.gatherRefreshIntervalSec || 3600)) * 1000,
     range1Start: Math.max(1, Number(params.gatherSwitchRange1Start || 701)),
     range1End:   Math.max(1, Number(params.gatherSwitchRange1End   || 2979)),
     range2Start: Math.max(1, Number(params.gatherSwitchRange2Start || 4003)),
@@ -181,49 +190,78 @@
   // ============================================================
   // 2. 采集点 wall-clock 刷新
   // ============================================================
+  // 翻开关方向: 与 CommonEvent 325 的 [start,end,1] 完全一致 (1 = OFF)。
+  // 资源事件页 1 的 conditions 多数是 "switch701 = true → 空页", 把开关置 OFF
+  // 让 conditions 不再满足, 玩家会再次看到资源点.
   if (CFG.gatherEnabled) {
-    const _Scene_Map_start = Scene_Map.prototype.start;
-    Scene_Map.prototype.start = function () {
-      _Scene_Map_start.call(this);
-      try {
-        applyGatherRefresh();
-      } catch (e) {
-        LOG('warn', 'gather refresh failed:', e && e.message);
-      }
-    };
+    const POLL_INTERVAL_MS = 60_000; // 地图上 60s 轮询一次, AFK 挂机也能触发
 
-    function applyGatherRefresh() {
-      if (!$gameSystem || !$gameSwitches) return;
+    let pollTimer = null;
+
+    function applyGatherRefresh(reason) {
+      if (!$gameSystem || !$gameSwitches) return false;
 
       const now = Date.now();
       const last = $gameSystem._lastGatherRefreshTs;
 
-      // 老存档第一次进图: 仅初始化时间戳, 不立刻刷
+      // 老存档第一次 / 全新角色: 仅初始化时间戳, 不立刻刷
       if (typeof last !== 'number') {
         $gameSystem._lastGatherRefreshTs = now;
-        LOG('debug', 'first map enter, init gather refresh timestamp');
-        return;
+        LOG('debug', 'init gather refresh timestamp (' + reason + ')');
+        return false;
       }
 
       const elapsed = now - last;
       if (elapsed < CFG.gatherRefreshIntervalMs) {
-        LOG('debug', 'gather refresh skipped, elapsed=' + Math.floor(elapsed / 1000) + 's < ' + Math.floor(CFG.gatherRefreshIntervalMs / 1000) + 's');
-        return;
+        LOG('debug', 'gather refresh skipped (' + reason + '), elapsed=' +
+            Math.floor(elapsed / 1000) + 's < ' +
+            Math.floor(CFG.gatherRefreshIntervalMs / 1000) + 's');
+        return false;
       }
 
-      // 翻两段开关
+      // 翻两段开关, 与 CommonEvent 325 完全一致 (置 OFF)
       let count = 0;
       for (let id = CFG.range1Start; id <= CFG.range1End; id++) {
-        $gameSwitches.setValue(id, true);
+        $gameSwitches.setValue(id, false);
         count++;
       }
       for (let id = CFG.range2Start; id <= CFG.range2End; id++) {
-        $gameSwitches.setValue(id, true);
+        $gameSwitches.setValue(id, false);
         count++;
       }
       $gameSystem._lastGatherRefreshTs = now;
-      LOG('info', 'gather refresh fired (offline ' + Math.floor(elapsed / 1000) + 's, switches flipped=' + count + ')');
+      // 全图事件刷新, 让正在显示的事件立即采用新页
+      if ($gameMap && typeof $gameMap.requestRefresh === 'function') {
+        $gameMap.requestRefresh();
+      }
+      LOG('info', 'gather refresh fired (' + reason + ', offline ' +
+          Math.floor(elapsed / 1000) + 's, switches=' + count + ')');
+      return true;
     }
+
+    // (a) 进入 Scene_Map 立即检查 (覆盖"刚开游戏"+"切图")
+    const _Scene_Map_start = Scene_Map.prototype.start;
+    Scene_Map.prototype.start = function () {
+      _Scene_Map_start.call(this);
+      try { applyGatherRefresh('mapStart'); } catch (e) { LOG('warn', 'refresh failed:', e && e.message); }
+      // (b) 启动 60s 轮询, 覆盖 AFK / 后台挂机
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(() => {
+        try { applyGatherRefresh('poll'); } catch (e) { LOG('warn', 'poll refresh failed:', e && e.message); }
+      }, POLL_INTERVAL_MS);
+    };
+
+    // 离开 Scene_Map 停掉轮询
+    const _Scene_Map_terminate = Scene_Map.prototype.terminate;
+    Scene_Map.prototype.terminate = function () {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      _Scene_Map_terminate.call(this);
+    };
+
+    // 暴露给调试钩子用
+    Game_System.prototype._applyGatherRefreshNow = function () {
+      return applyGatherRefresh('debug');
+    };
   }
 
   // ============================================================
@@ -234,10 +272,10 @@
     forceRefreshGather() {
       if (!$gameSystem) return false;
       $gameSystem._lastGatherRefreshTs = 0;
-      if (SceneManager._scene && SceneManager._scene.constructor === Scene_Map) {
-        try { Scene_Map.prototype.start.call(SceneManager._scene); } catch (e) {}
+      if (typeof $gameSystem._applyGatherRefreshNow === 'function') {
+        return $gameSystem._applyGatherRefreshNow();
       }
-      return true;
+      return false;
     },
     botanyStatus() {
       if (!$gameSystem || !$gameSystem._botanys) return [];
@@ -251,6 +289,19 @@
         lifeCountMs: b._lifeCountMs || 0,
         idleSec: b._lastUpdateTs ? Math.floor((now - b._lastUpdateTs) / 1000) : null,
       }));
+    },
+    gatherStatus() {
+      if (!$gameSystem) return null;
+      const now = Date.now();
+      const last = $gameSystem._lastGatherRefreshTs;
+      if (typeof last !== 'number') return { lastRefreshTs: null, idleSec: null, intervalSec: CFG.gatherRefreshIntervalMs / 1000 };
+      return {
+        lastRefreshTs: last,
+        lastRefreshAt: new Date(last).toLocaleString(),
+        idleSec: Math.floor((now - last) / 1000),
+        intervalSec: CFG.gatherRefreshIntervalMs / 1000,
+        nextRefreshIn: Math.max(0, Math.floor((CFG.gatherRefreshIntervalMs - (now - last)) / 1000)),
+      };
     },
   };
 
