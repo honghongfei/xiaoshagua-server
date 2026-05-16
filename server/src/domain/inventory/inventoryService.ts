@@ -4,7 +4,10 @@ import * as repo from './inventoryRepo.js';
 
 export type ItemKind = repo.ItemKind;
 
-const GOLD_CAP = 9_999_999;
+// 与 RMMZ 默认 Game_Party.maxGold() (99,999,999, 8 位) 对齐.
+// 老版本写成 9_999_999 (7 位) 会把单机里超过千万的存档上传时硬 clamp,
+// 玩家钱被吞一位. 已经被吃掉的金币要靠玩家本地 file*.rmmzsave 重新上传补回.
+const GOLD_CAP = 99_999_999;
 const ITEM_CAP = 9_999;
 
 export interface InventorySnapshot {
