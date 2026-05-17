@@ -20,6 +20,23 @@
  * @type boolean
  * @default true
  *
+ * @param showCancelButton
+ * @text 显示"取消种植"浮动按钮
+ * @desc 手机没有右键, 用屏幕按钮代替。
+ *       auto = 仅手机端进入种植态时显示;
+ *       always = 桌面+手机都显示;
+ *       never = 不显示, 桌面玩家继续用右键。
+ * @type select
+ * @option auto
+ * @option always
+ * @option never
+ * @default auto
+ *
+ * @param cancelButtonText
+ * @text 取消按钮文字
+ * @type string
+ * @default 取消种植
+ *
  * @help
  * 解决的痛点
  * ----------------------------------------------------------------------------
@@ -37,8 +54,9 @@
  * 退出条件 (满足任一就退出种植态):
  *   1. 玩家右键 (TouchInput.isCancelled): 走原版 updateDestination 里的逻辑
  *      不需要本插件干预
- *   2. 种子已耗尽 (numItems === 0): 自动退出 + 可选播放 cancel 音效
- *   3. 移除/卖掉了背包里那个种子, 触发其他剧情等: 同 2
+ *   2. 玩家点屏幕浮动按钮 "取消种植" (手机端默认显示)
+ *   3. 种子已耗尽 (numItems === 0): 自动退出 + 可选播放 cancel 音效
+ *   4. 移除/卖掉了背包里那个种子, 触发其他剧情等: 同 3
  *
  * 兼容性
  * ----------------------------------------------------------------------------
@@ -53,7 +71,15 @@
   const CFG = {
     keepCursorOnEmpty: String(params.keepCursorOnEmpty || 'false') === 'true',
     playSeOnExit: String(params.playSeOnExit || 'true') === 'true',
+    showCancelButton: String(params.showCancelButton || 'auto').toLowerCase(),
+    cancelButtonText: String(params.cancelButtonText || '取消种植'),
   };
+
+  function shouldShowButton() {
+    if (CFG.showCancelButton === 'always') return true;
+    if (CFG.showCancelButton === 'never') return false;
+    return typeof Utils !== 'undefined' && Utils.isMobileDevice && Utils.isMobileDevice();
+  }
 
   // 原版 Scene_Map.plant 在 XdRs_Arder_Scene.js:183 处定义.
   // 我们直接重写, 保留原行为但去掉"种完立即退出"那一步.
@@ -95,4 +121,98 @@
 
     return true;
   };
+
+  // ----------------------------------------------------------------
+  // 屏幕浮动 "取消种植" 按钮 (手机端默认开启)
+  // ----------------------------------------------------------------
+  // 触发逻辑: 与原版右键取消等价.
+  //   1. 播 cancel 音效
+  //   2. $gameTemp.setPlantSelect()  → 清掉指针 + 解锁玩家移动
+  //   3. SceneManager.displyMenuWindow(2) → 重新打开背包 (匹配原版行为)
+  //
+  // 显示逻辑: hook Game_Temp.setPlantSelect 在状态切换时显示/隐藏.
+  //   离开 Scene_Map 时一定隐藏 (avoid 在标题界面误显示).
+  let cancelBtn = null;
+
+  function buildCancelButton() {
+    cancelBtn = document.createElement('button');
+    cancelBtn.id = 'xsg-plant-continuous-cancel';
+    cancelBtn.textContent = '✕ ' + CFG.cancelButtonText;
+    Object.assign(cancelBtn.style, {
+      position: 'absolute',
+      right: '14px',
+      bottom: '14px',  // 种植态期间收菜按钮会让位, 占据底部位置
+      padding: '12px 18px',
+      fontSize: '15px',
+      fontWeight: 'bold',
+      background: 'linear-gradient(135deg, #d04d4d 0%, #a03030 100%)',
+      color: '#fff',
+      border: '0',
+      borderRadius: '24px',
+      cursor: 'pointer',
+      zIndex: '8001',
+      boxShadow: '0 4px 14px rgba(0,0,0,0.5)',
+      letterSpacing: '1px',
+      transition: 'transform 80ms ease-out',
+      touchAction: 'manipulation',
+      userSelect: 'none',
+      display: 'none',
+    });
+
+    [
+      'mousedown', 'mouseup',
+      'pointerdown', 'pointerup',
+      'touchstart', 'touchend',
+    ].forEach((evt) => {
+      cancelBtn.addEventListener(evt, (e) => {
+        e.stopPropagation();
+        if (e.preventDefault) e.preventDefault();
+      }, evt === 'touchstart' || evt === 'touchend' ? { passive: false } : undefined);
+    });
+
+    const trigger = (e) => {
+      e.stopPropagation();
+      if (e.preventDefault) e.preventDefault();
+      if (!$gameTemp || !$gameTemp.isPlantSelect()) return;
+      SoundManager.playCancel();
+      $gameTemp.setPlantSelect();   // 清空种植态; 同时会 hook 隐藏本按钮
+      // 与原版右键路径一致: 重新弹出背包窗 (callMenuChildWindow(2) = 'item')
+      if (typeof SceneManager !== 'undefined' && typeof SceneManager.displyMenuWindow === 'function') {
+        try { SceneManager.displyMenuWindow(2); } catch (e) { /* ignore */ }
+      }
+    };
+    cancelBtn.addEventListener('click', trigger);
+    cancelBtn.addEventListener('touchend', trigger, { passive: false });
+
+    cancelBtn.addEventListener('mouseenter', () => { cancelBtn.style.transform = 'scale(1.05)'; });
+    cancelBtn.addEventListener('mouseleave', () => { cancelBtn.style.transform = 'scale(1)'; });
+
+    document.body.appendChild(cancelBtn);
+  }
+
+  function syncCancelButton() {
+    if (!shouldShowButton()) return;
+    if (!cancelBtn) buildCancelButton();
+    const inPlantMode = !!($gameTemp && $gameTemp.isPlantSelect());
+    const inMap = SceneManager._scene instanceof Scene_Map;
+    cancelBtn.style.display = (inPlantMode && inMap) ? 'block' : 'none';
+  }
+
+  // hook Game_Temp.setPlantSelect 来感知状态变化
+  if (typeof Game_Temp !== 'undefined' && Game_Temp.prototype.setPlantSelect) {
+    const _setPlantSelect = Game_Temp.prototype.setPlantSelect;
+    Game_Temp.prototype.setPlantSelect = function (id) {
+      _setPlantSelect.call(this, id);
+      try { syncCancelButton(); } catch (e) { /* swallow */ }
+    };
+  }
+
+  // 离开 Scene_Map 一定隐藏 (即使种植态意外残留)
+  if (typeof Scene_Map !== 'undefined') {
+    const _Scene_Map_terminate = Scene_Map.prototype.terminate;
+    Scene_Map.prototype.terminate = function () {
+      if (cancelBtn) cancelBtn.style.display = 'none';
+      _Scene_Map_terminate.call(this);
+    };
+  }
 })();
