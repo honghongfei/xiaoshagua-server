@@ -13,21 +13,6 @@
  * @type string
  * @default H
  *
- * @param showFloatingButton
- * @text 显示屏幕浮动按钮
- * @desc auto = 仅手机端显示, desktop 端走快捷键. always = 桌面+手机都显示.
- *       never = 不显示, 只能靠快捷键 (桌面玩家如果不想看到浮窗可选这个).
- * @type select
- * @option auto
- * @option always
- * @option never
- * @default auto
- *
- * @param floatingButtonText
- * @text 浮动按钮文字
- * @type string
- * @default 收菜
- *
  * @param requireConfirm
  * @text 收菜前弹确认窗
  * @desc true → 弹一个 confirm 让玩家确认 (适合手抖怕误触).
@@ -87,20 +72,10 @@
   const params = PluginManager.parameters(PLUGIN);
   const CFG = {
     hotkey: String(params.hotkey || 'H').toUpperCase(),
-    showFloatingButton: String(params.showFloatingButton || 'auto').toLowerCase(),
-    floatingButtonText: String(params.floatingButtonText || '收菜'),
     requireConfirm: String(params.requireConfirm || 'false') === 'true',
     playSeOnHarvest: String(params.playSeOnHarvest || 'true') === 'true',
     showSummaryMessage: String(params.showSummaryMessage || 'true') === 'true',
   };
-
-  // 是否显示浮动按钮: auto = 仅手机, always = 全平台, never = 不显示
-  function shouldShowButton() {
-    if (CFG.showFloatingButton === 'always') return true;
-    if (CFG.showFloatingButton === 'never') return false;
-    // auto
-    return typeof Utils !== 'undefined' && Utils.isMobileDevice && Utils.isMobileDevice();
-  }
 
   // ----------------------------------------------------------------
   // 主逻辑: 扫描 + 聚合 + 一次性发放 + 一次性清理
@@ -177,6 +152,7 @@
     if ($gameTemp && typeof $gameTemp.isPlantSelect === 'function' && $gameTemp.isPlantSelect()) return false;
     return true;
   }
+
   // ----------------------------------------------------------------
   // 热键绑定
   // ----------------------------------------------------------------
@@ -198,106 +174,4 @@
 
   // 暴露调试钩子 (玩家可以 F12 控制台手动调用)
   window.XdRsPlantHarvestAll = { cfg: CFG, run, canRun };
-
-  // ----------------------------------------------------------------
-  // 屏幕浮动按钮 (手机端默认开启)
-  // ----------------------------------------------------------------
-  // 只在 Scene_Map 上显示, 离开地图自动隐藏. 必须截断 pointer 事件链
-  // (mousedown/touchstart/click 等), 否则会冒泡到 RMMZ TouchInput 触发
-  // 寻路 / 种植 / 互动逻辑.
-  let floatingBtn = null;
-
-  function buildFloatingButton() {
-    floatingBtn = document.createElement('button');
-    floatingBtn.id = 'xsg-plant-harvest-all-btn';
-    floatingBtn.textContent = '🌾 ' + CFG.floatingButtonText;
-    Object.assign(floatingBtn.style, {
-      position: 'absolute',
-      right: '14px',
-      bottom: '14px',
-      padding: '12px 18px',
-      fontSize: '15px',
-      fontWeight: 'bold',
-      background: 'linear-gradient(135deg, #4dba50 0%, #2c9c4a 100%)',
-      color: '#fff',
-      border: '0',
-      borderRadius: '24px',
-      cursor: 'pointer',
-      zIndex: '8000',  // 低于 SaveMigrate 入口 (8990) / 登录 (9000+), 不挡住菜单
-      boxShadow: '0 4px 14px rgba(0,0,0,0.5)',
-      letterSpacing: '1px',
-      transition: 'transform 80ms ease-out',
-      touchAction: 'manipulation',  // 移除 300ms 双击延迟
-      userSelect: 'none',
-      display: 'none',
-    });
-
-    // 阻止事件冒泡到 document, 防止 RMMZ 把这个点当作"点地图"触发寻路.
-    [
-      'mousedown', 'mouseup',
-      'pointerdown', 'pointerup',
-      'touchstart', 'touchend',
-    ].forEach((evt) => {
-      floatingBtn.addEventListener(evt, (e) => {
-        e.stopPropagation();
-        if (e.preventDefault) e.preventDefault();
-      }, evt === 'touchstart' || evt === 'touchend' ? { passive: false } : undefined);
-    });
-
-    // 真正的触发: click + touchend 都试一次, 在某些设备上 click 受 300ms 延迟
-    // 影响, 用 touchend 直接响应快得多.
-    const trigger = (e) => {
-      e.stopPropagation();
-      if (e.preventDefault) e.preventDefault();
-      run();
-    };
-    floatingBtn.addEventListener('click', trigger);
-    floatingBtn.addEventListener('touchend', trigger, { passive: false });
-
-    // 桌面端的 hover 反馈 (手机不会触发 hover)
-    floatingBtn.addEventListener('mouseenter', () => { floatingBtn.style.transform = 'scale(1.05)'; });
-    floatingBtn.addEventListener('mouseleave', () => { floatingBtn.style.transform = 'scale(1)'; });
-
-    document.body.appendChild(floatingBtn);
-  }
-
-  function syncFloatingButton() {
-    if (!shouldShowButton()) return;
-    if (!floatingBtn) buildFloatingButton();
-    const inMap = SceneManager._scene instanceof Scene_Map;
-    // 种植态期间隐藏收菜按钮, 让位给"取消种植"按钮 (PlantContinuous 那边的)
-    const inPlant = $gameTemp && typeof $gameTemp.isPlantSelect === 'function' && $gameTemp.isPlantSelect();
-    floatingBtn.style.display = (inMap && !inPlant) ? 'block' : 'none';
-  }
-
-  function showFloatingButton() {
-    syncFloatingButton();
-  }
-
-  function hideFloatingButton() {
-    if (floatingBtn) floatingBtn.style.display = 'none';
-  }
-
-  // 在 Scene_Map 进入时显示, 离开时隐藏
-  if (typeof Scene_Map !== 'undefined') {
-    const _Scene_Map_start = Scene_Map.prototype.start;
-    Scene_Map.prototype.start = function () {
-      _Scene_Map_start.call(this);
-      showFloatingButton();
-    };
-    const _Scene_Map_terminate = Scene_Map.prototype.terminate;
-    Scene_Map.prototype.terminate = function () {
-      hideFloatingButton();
-      _Scene_Map_terminate.call(this);
-    };
-  }
-
-  // 切换种植态时同步刷新按钮可见性 (与 PlantContinuous 互不依赖, 各自 hook)
-  if (typeof Game_Temp !== 'undefined' && Game_Temp.prototype.setPlantSelect) {
-    const _setPlantSelect = Game_Temp.prototype.setPlantSelect;
-    Game_Temp.prototype.setPlantSelect = function (id) {
-      _setPlantSelect.call(this, id);
-      try { syncFloatingButton(); } catch (e) { /* swallow */ }
-    };
-  }
 })();
