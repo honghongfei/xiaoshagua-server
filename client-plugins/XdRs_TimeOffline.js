@@ -269,6 +269,13 @@
     function applyGatherRefresh(reason) {
       if (!$gameSystem || !$gameSwitches) return false;
 
+      // 联机管理图：资源存在/刷新由服务端权威驱动(XdRs_Online_Gather)，禁用本地每角色刷新
+      const XG = window.XdRsOnline;
+      if (XG && XG.Gather && typeof XG.Gather.isManagedMap === 'function' && XG.Gather.isManagedMap()) {
+        LOG('debug', 'gather refresh skipped (server-managed map): ' + reason);
+        return false;
+      }
+
       const now = Date.now();
       const last = $gameSystem._lastGatherRefreshTs;
 

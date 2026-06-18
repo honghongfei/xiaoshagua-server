@@ -367,17 +367,9 @@ export function installRouter(io: Server): void {
         const session = socket.session;
         if (!session.authed || session.pid === null) throw new AppError('NO_AUTH', 'login required');
         const input = parse(GatherClaim, raw);
+        // 发货由客户端本地走 Online_Inventory(服务端权威库存)，此处仅做 despawn + 广播 + 排程 respawn，不重复发货
         const r = tryClaim(session.pid, input.rid);
-        if (r.ok && r.grant) {
-          try {
-            invGainItem(r.grant.characterId, 'item', r.grant.itemId, r.grant.qty, 'gather');
-          } catch (e) {
-            log.warn({ err: e, rid: input.rid }, 'gather grant failed after claim');
-          }
-          cb?.(okAck({ rid: input.rid }));
-        } else {
-          cb?.(failAck(r.code ?? 'CLAIM_FAILED', 'gather claim failed'));
-        }
+        cb?.(r.ok ? okAck({ rid: input.rid }) : failAck(r.code ?? 'CLAIM_FAILED', 'gather claim failed'));
       } catch (err) {
         sendError(socket, cb, err);
       }
