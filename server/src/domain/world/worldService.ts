@@ -6,6 +6,7 @@ import {
   getOnlineByPid,
   listOnline,
   persistPosition,
+  pruneExpiredTokens,
   type OnlinePlayer,
 } from '../player/playerService.js';
 import { MapState, toView } from './mapState.js';
@@ -14,6 +15,7 @@ const maps = new Map<number, MapState>();
 let io: Server | null = null;
 let tickHandle: NodeJS.Timeout | null = null;
 let persistHandle: NodeJS.Timeout | null = null;
+let tokenPruneHandle: NodeJS.Timeout | null = null;
 
 export function attachIo(server: Server): void {
   io = server;
@@ -23,14 +25,29 @@ export function startTick(): void {
   if (tickHandle) return;
   tickHandle = setInterval(flushAll, config.worldTickMs);
   persistHandle = setInterval(flushPositions, 60_000);
+  if (config.tokenPruneIntervalMs > 0) {
+    pruneTokens();
+    tokenPruneHandle = setInterval(pruneTokens, config.tokenPruneIntervalMs);
+  }
   log.info({ tickMs: config.worldTickMs }, 'world tick started');
 }
 
 export function stopTick(): void {
   if (tickHandle) clearInterval(tickHandle);
   if (persistHandle) clearInterval(persistHandle);
+  if (tokenPruneHandle) clearInterval(tokenPruneHandle);
   tickHandle = null;
   persistHandle = null;
+  tokenPruneHandle = null;
+}
+
+function pruneTokens(): void {
+  try {
+    const n = pruneExpiredTokens();
+    if (n > 0) log.info({ count: n }, 'expired auth tokens pruned');
+  } catch (err) {
+    log.warn({ err }, 'pruneExpiredTokens failed');
+  }
 }
 
 function getOrCreate(mapId: number): MapState {
@@ -143,7 +160,7 @@ function flushOne(map: MapState): void {
   io.to(room(map.mapId)).emit('world.delta', payload);
 }
 
-function flushPositions(): void {
+export function flushPositions(): void {
   let n = 0;
   for (const p of listOnline()) {
     try {

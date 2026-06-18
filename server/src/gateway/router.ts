@@ -6,6 +6,7 @@ import {
   AuthLogin,
   AuthRegister,
   AuthResume,
+  CharRename,
   ChatSend,
   InventoryGainGold,
   InventoryGainItem,
@@ -17,6 +18,7 @@ import {
   PlayerEnterMap,
   PlayerMove,
   SaveUpload,
+  SocialSearch,
   StateSetSwitch,
   StateSetVar,
 } from '../util/schema.js';
@@ -30,6 +32,7 @@ import {
   markOnline,
   persistPosition,
   register,
+  renameCharacter,
   resume,
   updateCharacterAppearance,
   type CharacterPublic,
@@ -56,6 +59,7 @@ import {
   listBlocks,
   listFriends,
   removeFriend,
+  searchByName,
   unblockOther,
 } from '../domain/social/socialService.js';
 import {
@@ -232,6 +236,18 @@ export function installRouter(io: Server): void {
       }
     });
 
+    socket.on('character.rename', (raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const s = requireAuth(socket);
+        const input = parse(CharRename, raw);
+        cb?.(okAck(renameCharacter(s.pid, input.name)));
+      } catch (err) {
+        sendError(socket, cb, err);
+      }
+    });
+
     socket.on('player.enterMap', (raw, ack) => {
       const cb = safeAck(ack);
       try {
@@ -325,6 +341,19 @@ export function installRouter(io: Server): void {
       cb?.(okAck({ online: listOnline().length, ...stats() }));
     });
 
+    // 在线玩家列表(联机中心 Hub 的"在线玩家"格用): 直接私聊/加好友/邀交易, 不必跑到对方身边
+    socket.on('player.listOnline', (_raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        requireAuth(socket);
+        const players = listOnline().map((p) => ({ pid: p.pid, name: p.name, mapId: p.mapId, level: p.level }));
+        cb?.(okAck({ players }));
+      } catch (err) {
+        sendError(socket, cb, err);
+      }
+    });
+
     socket.on('chat.send', (raw, ack) => {
       const cb = safeAck(ack);
       try {
@@ -382,6 +411,18 @@ export function installRouter(io: Server): void {
         else unblockOther(session.pid, input.pid);
         invalidateCacheFor(session.pid);
         cb?.(okAck({ ok: true }));
+      } catch (err) {
+        sendError(socket, cb, err);
+      }
+    });
+
+    socket.on('social.search', (raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const s = requireAuth(socket);
+        const input = parse(SocialSearch, raw);
+        cb?.(okAck({ results: searchByName(s.pid, input.name) }));
       } catch (err) {
         sendError(socket, cb, err);
       }
@@ -509,7 +550,7 @@ export function installRouter(io: Server): void {
         if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
         const s = requireAuth(socket);
         const input = parse(SaveUpload, raw);
-        const blob = uploadSave(s.pid, input.contents, input.meta);
+        const blob = uploadSave(s.pid, input.contents, input.meta, input.baseTs);
         cb?.(okAck({ ts: blob.ts }));
       } catch (err) { sendError(socket, cb, err); }
     });

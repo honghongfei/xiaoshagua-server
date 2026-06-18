@@ -88,7 +88,8 @@ export function startServer(): Promise<ServerHandle> {
               return;
             }
             const { session } = resumeSession(body.token);
-            const blob = uploadSave(session.characterId, body.contents, body.meta);
+            const baseTs = typeof body.baseTs === 'number' ? body.baseTs : undefined;
+            const blob = uploadSave(session.characterId, body.contents, body.meta, baseTs);
             res.writeHead(200, { 'content-type': 'application/json' });
             res.end(JSON.stringify({ ok: true, ts: blob.ts }));
           } catch (e: any) {

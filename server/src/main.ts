@@ -1,7 +1,7 @@
 import { runMigrations } from './db/migrate.js';
 import { closeDb } from './db/sqlite.js';
 import { startServer, type ServerHandle } from './gateway/io.js';
-import { stopTick } from './domain/world/worldService.js';
+import { flushPositions, stopTick } from './domain/world/worldService.js';
 import { log } from './log.js';
 
 let handle: ServerHandle | null = null;
@@ -19,6 +19,13 @@ async function bootstrap(): Promise<void> {
 async function shutdown(signal: string): Promise<void> {
   log.info({ signal }, 'shutting down');
   stopTick();
+  // 关闭定时器后, 在线玩家的位移还在内存里 (persist 每 60s 才落库一次),
+  // 这里同步补刷一次, 避免重启丢最多 60s 的位置.
+  try {
+    flushPositions();
+  } catch (err) {
+    log.warn({ err }, 'flushPositions on shutdown failed');
+  }
   if (handle) {
     try {
       await handle.close();

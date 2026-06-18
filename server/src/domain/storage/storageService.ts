@@ -9,12 +9,27 @@ export interface SaveBlob {
   meta?: Record<string, unknown>;
 }
 
-export function uploadSave(characterId: number, contents: string, meta?: Record<string, unknown>): SaveBlob {
+export function uploadSave(
+  characterId: number,
+  contents: string,
+  meta?: Record<string, unknown>,
+  baseTs?: number,
+): SaveBlob {
   if (typeof contents !== 'string') throw new AppError('BAD_INPUT', 'contents must be string');
   if (Buffer.byteLength(contents, 'utf8') > MAX_BLOB_BYTES) {
     throw new AppError('BLOB_TOO_LARGE', `save blob >${MAX_BLOB_BYTES} bytes`);
   }
   const db = openDb();
+  // 乐观并发守卫: 仅当客户端给了 baseTs 才校验(向后兼容老客户端).
+  // 当前云档比客户端最后见过的还新 -> 拒绝, 避免"没读云就盲写覆盖"(admin 云档被覆盖的根因之一).
+  if (typeof baseTs === 'number' && Number.isFinite(baseTs)) {
+    const cur = db
+      .prepare<[number], { ts: number }>('SELECT ts FROM savefile_cloud WHERE character_id = ?')
+      .get(characterId);
+    if (cur && cur.ts > baseTs) {
+      throw new AppError('SAVE_STALE', `cloud save is newer (cloud=${cur.ts} > base=${baseTs}), refusing overwrite`);
+    }
+  }
   const ts = Date.now();
   const metaStr = meta ? JSON.stringify(meta) : null;
   db.prepare(

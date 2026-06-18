@@ -22,11 +22,22 @@ interface Trade {
   b: OfferSide;
   state: 'invited' | 'open' | 'locked' | 'committed' | 'cancelled';
   createdAt: number;
+  inviteTimer?: NodeJS.Timeout;
 }
+
+// 邀请超时: 被邀请方 INVITE_TTL_MS 内没接受/拒绝, 自动取消, 释放双方 pidToTrade, 不留僵尸邀请.
+const INVITE_TTL_MS = 30_000;
 
 const trades = new Map<string, Trade>();
 const pidToTrade = new Map<number, string>();
 let io: Server | null = null;
+
+function clearInviteTimer(t: Trade): void {
+  if (t.inviteTimer) {
+    clearTimeout(t.inviteTimer);
+    t.inviteTimer = undefined;
+  }
+}
 
 export function attachTradeIo(server: Server): void { io = server; }
 
@@ -49,8 +60,15 @@ export function invite(fromPid: number, targetPid: number): { tradeId: string } 
   trades.set(tradeId, t);
   pidToTrade.set(fromPid, tradeId);
   pidToTrade.set(targetPid, tradeId);
+  t.inviteTimer = setTimeout(() => {
+    const cur = trades.get(tradeId);
+    if (cur && cur.state === 'invited') {
+      cur.state = 'cancelled';
+      end(cur, 'invite_timeout');
+    }
+  }, INVITE_TTL_MS);
   if (io) {
-    io.to(toP.socketId).emit('trade.invite.evt', { tradeId, fromPid, fromName: fromP.name });
+    io.to(toP.socketId).emit('trade.invite.evt', { tradeId, fromPid, fromName: fromP.name, ttlMs: INVITE_TTL_MS });
   }
   return { tradeId };
 }
@@ -60,6 +78,7 @@ export function respond(tradeId: string, pid: number, accept: boolean): void {
   if (!t) throw new AppError('NOT_FOUND', 'trade not found');
   if (t.b.pid !== pid) throw new AppError('FORBIDDEN', 'only invitee can respond');
   if (t.state !== 'invited') throw new AppError('BAD_STATE', 'already responded');
+  clearInviteTimer(t);
   if (!accept) {
     t.state = 'cancelled';
     end(t, 'declined');
@@ -157,34 +176,45 @@ export function cancel(tradeId: string, pid: number, reason = 'cancelled'): void
 }
 
 function commit(t: Trade): void {
-  invRepo.tx((db) => {
-    // Re-validate ownership inside transaction
-    validateOwnership(t.a.pid, t.a.gold, t.a.items);
-    validateOwnership(t.b.pid, t.b.gold, t.b.items);
+  try {
+    invRepo.tx((db) => {
+      // Re-validate ownership inside transaction
+      validateOwnership(t.a.pid, t.a.gold, t.a.items);
+      validateOwnership(t.b.pid, t.b.gold, t.b.items);
 
-    if (t.a.gold > 0) invRepo.applyGoldDelta(db, t.a.pid, -t.a.gold);
-    if (t.a.gold > 0) invRepo.applyGoldDelta(db, t.b.pid, t.a.gold);
-    if (t.b.gold > 0) invRepo.applyGoldDelta(db, t.b.pid, -t.b.gold);
-    if (t.b.gold > 0) invRepo.applyGoldDelta(db, t.a.pid, t.b.gold);
+      if (t.a.gold > 0) invRepo.applyGoldDelta(db, t.a.pid, -t.a.gold);
+      if (t.a.gold > 0) invRepo.applyGoldDelta(db, t.b.pid, t.a.gold);
+      if (t.b.gold > 0) invRepo.applyGoldDelta(db, t.b.pid, -t.b.gold);
+      if (t.b.gold > 0) invRepo.applyGoldDelta(db, t.a.pid, t.b.gold);
 
-    for (const it of t.a.items) {
-      invRepo.applyItemDelta(db, t.a.pid, it.kind, it.dataId, -it.count);
-      invRepo.applyItemDelta(db, t.b.pid, it.kind, it.dataId, +it.count);
-    }
-    for (const it of t.b.items) {
-      invRepo.applyItemDelta(db, t.b.pid, it.kind, it.dataId, -it.count);
-      invRepo.applyItemDelta(db, t.a.pid, it.kind, it.dataId, +it.count);
-    }
+      for (const it of t.a.items) {
+        invRepo.applyItemDelta(db, t.a.pid, it.kind, it.dataId, -it.count);
+        invRepo.applyItemDelta(db, t.b.pid, it.kind, it.dataId, +it.count);
+      }
+      for (const it of t.b.items) {
+        invRepo.applyItemDelta(db, t.b.pid, it.kind, it.dataId, -it.count);
+        invRepo.applyItemDelta(db, t.a.pid, it.kind, it.dataId, +it.count);
+      }
 
-    db.prepare(
-      'INSERT INTO trade_log (ts, a, b, items_json, gold_a, gold_b, ok) VALUES (?, ?, ?, ?, ?, ?, 1)',
-    ).run(Date.now(), t.a.pid, t.b.pid, JSON.stringify({ a: t.a.items, b: t.b.items }), t.a.gold, t.b.gold);
-  });
+      db.prepare(
+        'INSERT INTO trade_log (ts, a, b, items_json, gold_a, gold_b, ok) VALUES (?, ?, ?, ?, ?, ?, 1)',
+      ).run(Date.now(), t.a.pid, t.b.pid, JSON.stringify({ a: t.a.items, b: t.b.items }), t.a.gold, t.b.gold);
+    });
+  } catch (err) {
+    // 提交失败(确认后余额/物品被改、DB 异常等): better-sqlite3 事务已自动回滚, 资产不动.
+    // 但 trade 仍卡在 locked 会让双方永久占用 pidToTrade -> 僵尸交易. 这里回滚状态、
+    // 清理映射、通知双方, 并把错误抛回给 confirm 的调用方(router 会回 failAck).
+    t.state = 'cancelled';
+    end(t, 'commit_failed');
+    log.warn({ tradeId: t.id, a: t.a.pid, b: t.b.pid, err }, 'trade commit failed, rolled back');
+    throw err instanceof AppError ? err : new AppError('TRADE_FAILED', 'trade commit failed');
+  }
   t.state = 'committed';
   end(t, 'committed');
 }
 
 function end(t: Trade, reason: string): void {
+  clearInviteTimer(t);
   pidToTrade.delete(t.a.pid);
   pidToTrade.delete(t.b.pid);
   if (io) {

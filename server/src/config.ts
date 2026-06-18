@@ -26,6 +26,14 @@ export const config = {
   worldTickMs: num(process.env.WORLD_TICK_MS, 200),
 
   tokenTtlSec: num(process.env.TOKEN_TTL_SEC, 86400),
+  // 过期 token 清理间隔 (ms). 0 / 负数 = 关闭定时清理.
+  tokenPruneIntervalMs: num(process.env.TOKEN_PRUNE_INTERVAL_MS, 3_600_000),
+
+  // 资产接口单次 delta 封顶 (防客户端一发请求直接刷到 GOLD_CAP).
+  // 仅约束 socket 层的 inventory.gainGold / gainItem(玩法掉落/消耗走这里, 单次都很小);
+  // GM 发资产走 scripts/gm.ts 直连 DB, 不经过此限制. <=0 表示不限制.
+  maxGoldDeltaPerCall: num(process.env.MAX_GOLD_DELTA_PER_CALL, 10_000_000),
+  maxItemDeltaPerCall: num(process.env.MAX_ITEM_DELTA_PER_CALL, 1_000),
 
   logLevel: str(process.env.LOG_LEVEL, 'info'),
 } as const;

@@ -185,3 +185,18 @@ export function persistPosition(p: OnlinePlayer): void {
 export function updateCharacterAppearance(characterId: number, charSet: string, charIndex: number): void {
   repo.updateCharacterAppearance(characterId, charSet, charIndex);
 }
+
+// 改名: 写库 + 同步在线缓存里的 name(让后续 snapshot/world.delta 给别人看到新名字)
+export function renameCharacter(characterId: number, name: string): { name: string } {
+  const chr = repo.findCharacterById(characterId);
+  if (!chr) throw new AppError('CHAR_GONE', 'character not found');
+  repo.updateCharacterName(characterId, name);
+  const online = onlineByPid.get(characterId);
+  if (online) online.name = name;
+  return { name };
+}
+
+// 清理过期 auth_token. 由 worldService 的后台定时器周期调用, 防止表只增不删.
+export function pruneExpiredTokens(): number {
+  return repo.pruneExpiredTokens();
+}

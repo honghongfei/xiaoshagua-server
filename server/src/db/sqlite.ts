@@ -33,6 +33,12 @@ export function openDb(): DB {
 export function closeDb(): void {
   if (_db) {
     try {
+      // 关库前先把 WAL 回写主库并截断, 防异常退出时 WAL 膨胀 / 残留未合并的写入.
+      try {
+        _db.pragma('wal_checkpoint(TRUNCATE)');
+      } catch (err) {
+        log.warn({ err }, 'wal checkpoint on close failed');
+      }
       _db.close();
       log.info('sqlite closed');
     } catch (err) {

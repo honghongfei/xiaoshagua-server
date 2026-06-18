@@ -1,3 +1,4 @@
+import { config } from '../../config.js';
 import { log } from '../../log.js';
 import { AppError } from '../../util/errors.js';
 import * as repo from './inventoryRepo.js';
@@ -94,6 +95,11 @@ export interface DeltaResult {
 
 export function gainGold(characterId: number, amount: number, reason?: string): DeltaResult {
   if (!Number.isFinite(amount)) throw new AppError('BAD_INPUT', 'amount NaN');
+  // 收口: 单次 gold delta 封顶, 防客户端一发就刷到 GOLD_CAP. GM 走 CLI 直连 DB, 不经此路.
+  if (config.maxGoldDeltaPerCall > 0 && Math.abs(amount) > config.maxGoldDeltaPerCall) {
+    log.warn({ characterId, amount, reason, cap: config.maxGoldDeltaPerCall }, 'gold delta over per-call cap, rejected');
+    throw new AppError('ASSET_DELTA_TOO_LARGE', `gold delta ${amount} exceeds per-call cap ${config.maxGoldDeltaPerCall}`);
+  }
   return repo.tx((db) => {
     const before = repo.getGold(characterId);
     let target = before + amount;
@@ -115,6 +121,11 @@ export function gainItem(
   reason?: string,
 ): DeltaResult {
   if (!Number.isFinite(amount)) throw new AppError('BAD_INPUT', 'amount NaN');
+  // 收口: 单次 item delta 封顶. GM 走 CLI 直连 DB, 不经此路.
+  if (config.maxItemDeltaPerCall > 0 && Math.abs(amount) > config.maxItemDeltaPerCall) {
+    log.warn({ characterId, kind, dataId, amount, reason, cap: config.maxItemDeltaPerCall }, 'item delta over per-call cap, rejected');
+    throw new AppError('ASSET_DELTA_TOO_LARGE', `item delta ${amount} exceeds per-call cap ${config.maxItemDeltaPerCall}`);
+  }
   return repo.tx((db) => {
     const cur = repo.listInventory(characterId).find((r) => r.kind === kind && r.data_id === dataId);
     const before = cur ? cur.count : 0;

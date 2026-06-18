@@ -35,6 +35,10 @@ export const AuthResume = z.object({
   lastSeq: z.number().int().nonnegative().optional(),
 });
 
+export const CharRename = z.object({
+  name: CharName,
+});
+
 export const PlayerEnterMap = z.object({
   mapId: z.number().int().min(1),
   x: z.number().int().min(0).max(999),
@@ -72,6 +76,11 @@ export const PidOnly = z.object({
 export const PidWithKind = z.object({
   pid: z.number().int().positive(),
   kind: z.enum(['friend', 'block']),
+});
+
+// 按名字搜人(用于远距离加好友, 不必同图/在线)
+export const SocialSearch = z.object({
+  name: z.string().min(1).max(16),
 });
 
 export const InventoryGainGold = z.object({
@@ -123,6 +132,10 @@ export const StateSetVar = z.object({
 export const SaveUpload = z.object({
   contents: z.string().max(2_000_000),
   meta: z.record(z.string(), z.unknown()).optional(),
+  // 乐观并发: 客户端上传时带上"它最后一次见到的云档 ts". 服务端若发现当前云档
+  // 比这个 baseTs 还新, 说明客户端在覆盖一份它没看过的更新存档 -> 拒绝(SAVE_STALE).
+  // 不传(老客户端/兜底路径)则按旧行为无条件写入, 向后兼容.
+  baseTs: z.number().int().nonnegative().optional(),
 });
 
 export const TradeInvite = z.object({ targetPid: z.number().int().positive() });
@@ -161,10 +174,12 @@ export const DungeonEnter = z.object({
 export type AuthLoginInput = z.infer<typeof AuthLogin>;
 export type AuthRegisterInput = z.infer<typeof AuthRegister>;
 export type AuthResumeInput = z.infer<typeof AuthResume>;
+export type CharRenameInput = z.infer<typeof CharRename>;
 export type PlayerEnterMapInput = z.infer<typeof PlayerEnterMap>;
 export type PlayerMoveInput = z.infer<typeof PlayerMove>;
 export type PlayerActionInput = z.infer<typeof PlayerAction>;
 export type ChatSendInput = z.infer<typeof ChatSend>;
+export type SocialSearchInput = z.infer<typeof SocialSearch>;
 export type InventoryGainGoldInput = z.infer<typeof InventoryGainGold>;
 export type InventoryGainItemInput = z.infer<typeof InventoryGainItem>;
 export type InventoryUseInput = z.infer<typeof InventoryUse>;

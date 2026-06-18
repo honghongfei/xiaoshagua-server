@@ -1,5 +1,5 @@
 import { AppError } from '../../util/errors.js';
-import { findCharacterById } from '../player/playerRepo.js';
+import { findCharacterById, searchCharactersByName } from '../player/playerRepo.js';
 import { getOnlineByPid } from '../player/playerService.js';
 import * as repo from './socialRepo.js';
 
@@ -57,6 +57,16 @@ function decorate(pid: number): SocialEntry {
     online: !!on,
     mapId: on ? on.mapId : null,
   };
+}
+
+// 按名字搜人, 返回最多 20 条(含在线状态), 排除自己. 用于远距离/离线加好友.
+export function searchByName(self: number, q: string): SocialEntry[] {
+  return searchCharactersByName(q, 20)
+    .filter((r) => r.id !== self)
+    .map((r) => {
+      const on = getOnlineByPid(r.id);
+      return { pid: r.id, name: r.name, online: !!on, mapId: on ? on.mapId : null };
+    });
 }
 
 export function listFriends(self: number): SocialEntry[] {

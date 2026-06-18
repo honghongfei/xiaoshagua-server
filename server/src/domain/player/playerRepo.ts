@@ -116,6 +116,17 @@ export function findCharacterById(id: number): CharacterRow | undefined {
   return db.prepare<[number], CharacterRow>('SELECT * FROM character WHERE id = ?').get(id);
 }
 
+// 按名字模糊搜索角色(远距离加好友用). 转义 LIKE 通配符, 防用户输入 % / _ 命中全表.
+export function searchCharactersByName(q: string, limit: number): { id: number; name: string }[] {
+  const db = openDb();
+  const safe = q.replace(/[\\%_]/g, (c) => '\\' + c);
+  return db
+    .prepare<[string, number], { id: number; name: string }>(
+      "SELECT id, name FROM character WHERE name LIKE ? ESCAPE '\\' ORDER BY name ASC LIMIT ?",
+    )
+    .all('%' + safe + '%', limit);
+}
+
 export function updateCharacterPosition(
   characterId: number,
   mapId: number,
@@ -138,6 +149,11 @@ export function updateCharacterAppearance(
   db.prepare(
     'UPDATE character SET char_set = ?, char_index = ?, updated_at = ? WHERE id = ?',
   ).run(charSet, charIndex, Date.now(), characterId);
+}
+
+export function updateCharacterName(characterId: number, name: string): void {
+  const db = openDb();
+  db.prepare('UPDATE character SET name = ?, updated_at = ? WHERE id = ?').run(name, Date.now(), characterId);
 }
 
 export function insertAuthToken(row: AuthTokenRow): void {
