@@ -36,6 +36,13 @@ function cmpVer(a, b) {
   return 0;
 }
 
+// 读 JSON 并容忍 UTF-8 BOM（PowerShell `Set-Content -Encoding UTF8` 会写 BOM, 否则 JSON.parse 报 Unexpected token '\uFEFF'）
+function readJson(p) {
+  let raw = fs.readFileSync(p, 'utf8');
+  if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
+  return JSON.parse(raw);
+}
+
 const srcManifest = path.join(srcDir, 'manifest.json');
 if (!fs.existsSync(srcManifest)) {
   die('找不到 manifest.json: ' + srcManifest + '（先跑 tools/build_release.ps1）');
@@ -43,7 +50,7 @@ if (!fs.existsSync(srcManifest)) {
 
 let manifest;
 try {
-  manifest = JSON.parse(fs.readFileSync(srcManifest, 'utf8'));
+  manifest = readJson(srcManifest);
 } catch (e) {
   die('manifest.json 解析失败: ' + e.message);
 }
@@ -86,7 +93,7 @@ const seenFrom = new Set();
 for (const mfName of metaFiles) {
   let meta;
   try {
-    meta = JSON.parse(fs.readFileSync(path.join(srcDir, mfName), 'utf8'));
+    meta = readJson(path.join(srcDir, mfName));
   } catch (e) {
     console.warn(`[publish-release] WARN: 跳过无法解析的 patch meta: ${mfName} (${e.message})`);
     continue;
@@ -137,7 +144,7 @@ for (const mfName of metaFiles) {
 const destManifest = path.join(destDir, 'manifest.json');
 let minVersion = String(manifest.minVersion || '0.0.0');
 try {
-  const prev = JSON.parse(fs.readFileSync(destManifest, 'utf8'));
+  const prev = readJson(destManifest);
   if (prev && typeof prev.minVersion === 'string' && cmpVer(prev.minVersion, minVersion) > 0) {
     minVersion = prev.minVersion;
   }
