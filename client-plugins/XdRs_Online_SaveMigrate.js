@@ -231,6 +231,26 @@
         contents.system._bgsOnSave = { name: '', volume: 0, pitch: 0, pan: 0, pos: 0 };
       }
     }
+    // 1.5 存档锁账号: 校验归属, 必须卡在 inventory.replace 之前.
+    //   - 有章且 pid 不是当前账号 -> 拒绝(不跑 inventory.replace, 不上传)
+    //   - 无章(老档) -> TOFU 盖成当前账号, best-effort 写回本地, 让以后被拷也带章
+    const myPid = (Core.session && Core.session.character && typeof Core.session.character.pid === 'number')
+      ? Core.session.character.pid : null;
+    if (myPid == null) throw new Error('未登录, 无法校验存档归属');
+    const ownerStamp = contents.xsgOwner;
+    if (ownerStamp && typeof ownerStamp.pid === 'number' && ownerStamp.pid !== myPid) {
+      throw new Error('此存档属于其他账号 (owner=' + ownerStamp.pid + '), 无法上传');
+    }
+    if (!ownerStamp) {
+      const acctId = (Core.session.character.accountId != null) ? Core.session.character.accountId : null;
+      contents.xsgOwner = { v: 1, pid: myPid, accountId: acctId, at: Date.now() };
+      try {
+        await StorageManager.saveObject(saveName, contents);
+      } catch (e) {
+        Util.log('warn', 'SaveMigrate TOFU 写回本地失败 (不影响上传):', e && e.message);
+      }
+    }
+
     // 2. 从 contents.party 抽资产, 准备 inventory.replace 载荷
     const party = contents.party || {};
     const gold = Math.max(0, (party._gold | 0));
