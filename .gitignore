@@ -1,7 +1,8 @@
 # Server build / data / runtime
 server/node_modules/
 server/dist/
-server/data/
+server/data/*
+!server/data/gather-spawn-table.json
 server/logs/
 server/.tsbuildinfo
 server/.env

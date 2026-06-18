@@ -2,7 +2,8 @@ node_modules/
 dist/
 .tsbuildinfo
 logs/
-data/
+data/*
+!data/gather-spawn-table.json
 *.db
 *.db-journal
 *.db-wal
