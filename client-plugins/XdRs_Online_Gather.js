@@ -147,4 +147,15 @@
   });
 
   Net.on('__disconnect__', clearAll);
+
+  // 禁用本体「采集点刷新系统」CommonEvent 325(并行, 每 25200 帧=7 分钟翻 701-2979 OFF)在联机管理图的本地刷新
+  // —— 资源刷新交服务端权威, 避免本地 7 分钟刷新绕过 / 与服务端冲突
+  if (typeof Game_CommonEvent !== 'undefined') {
+    const _CE_isActive = Game_CommonEvent.prototype.isActive;
+    Game_CommonEvent.prototype.isActive = function () {
+      if (this._commonEventId === 325 && Gather.isManagedMap()) return false;
+      return _CE_isActive.call(this);
+    };
+  }
 })();
+
