@@ -53,22 +53,12 @@
     return activeByTile.get(tileKey(event.x, event.y)) || 0;
   };
 
-  // GatherAsync 采集完成回调：返回 true = 已由服务端接管，跳过本地结算
-  Gather.onResourceComplete = function (event) {
-    const rid = Gather.ridAtEvent(event);
-    if (!rid) return false; // 非服务端资源 → 本地结算
-    const x = event.x;
-    const y = event.y;
-    activeByTile.delete(tileKey(x, y)); // 乐观：先从活跃集移除，防重复 claim
-    Net.request('gather.claim', { rid })
-      .then(() => {
-        eraseResourceAt(x, y); // 服务端发货(库存增量推送) + 广播 claimed
-      })
-      .catch((err) => {
-        eraseResourceAt(x, y);
-        flash('慢了一步：' + ((err && err.message) || '资源已被采集'));
-      });
-    return true; // 跳过本地发货
+  // GatherAsync 采集完成回调：始终返回 false = 交回本地结算。
+  // 关键：本游戏 $gameParty.gainItem 已被 XdRs_Online_Inventory 拦截转服务端权威库存(乐观本地应用)，
+  // 所以本地采集本身就是「服务端权威发物 + 防刷」；本地 executeEventPage 还负责扣体力 + 翻消耗页。
+  // ③ 服务端 gather 域不接管发货(否则与库存拦截重复发物/丢体力)，留作未来「跨玩家显示/刷新」增强。
+  Gather.onResourceComplete = function () {
+    return false;
   };
 
   // 服务端增量
