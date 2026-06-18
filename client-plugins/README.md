@@ -45,7 +45,7 @@ https://cdn.socket.io/4.8.0/socket.io.min.js
 ```js
 {"name":"vendor/socket.io.min","status":true,"description":"vendor: socket.io-client v4","parameters":{}},
 {"name":"XdRs_Online_Util","status":true,"description":"联机-工具 (XSG-Online)","parameters":{}},
-{"name":"XdRs_Online_Net","status":true,"description":"联机-网络层 (XSG-Online)","parameters":{"serverUrl":"ws://8.163.32.142:8080","reconnectDelayMs":"3000","ackTimeoutMs":"8000"}},
+{"name":"XdRs_Online_Net","status":true,"description":"联机-网络层 (XSG-Online)","parameters":{"serverUrl":"wss://xgshx.duckdns.org:8443","reconnectDelayMs":"3000","ackTimeoutMs":"8000"}},
 {"name":"XdRs_Online_Core","status":true,"description":"联机-核心 (XSG-Online)","parameters":{"logLevel":"info"}},
 {"name":"XdRs_Online_Reconnect","status":true,"description":"联机-断线重连 (XSG-Online)","parameters":{"storageKey":"xsg.token","autoResumeOnBoot":"true"}},
 {"name":"XdRs_Online_Login","status":true,"description":"联机-登录 (XSG-Online)","parameters":{"titleCommandText":"联机","defaultMapId":"1","defaultSpawnX":"8","defaultSpawnY":"6"}},
@@ -62,7 +62,7 @@ https://cdn.socket.io/4.8.0/socket.io.min.js
 
 注意：
 - 顺序不能乱，每个插件依赖前面的
-- `serverUrl` 已填好 `ws://8.163.32.142:8080`（如果服务器换 IP 记得改）
+- `serverUrl` 已填好 `wss://xgshx.duckdns.org:8443`（如果服务器换 IP 记得改）
 
 ### 4. 默认热键
 
@@ -100,3 +100,4 @@ https://cdn.socket.io/4.8.0/socket.io.min.js
 | `XdRs_Online_Trade.js` | M4 | 两段提交交易 DOM 窗 |
 | `XdRs_Online_Pet.js` | M4 | 云宠物面板（与原 XdRs_Arder 并行） |
 | `XdRs_Online_Dungeon.js` | M5 | regionId 触发副本进入/离开 |
+| `XdRs_Online_MultiInstance.js` | 多开 | 多开实例隔离本地存档目录（须放 plugins.js 最前，配合 多开启动器.bat） |
