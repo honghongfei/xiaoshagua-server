@@ -94,4 +94,25 @@ describe('MapState', () => {
     expect(d!.enter).toEqual([]);
     expect(d!.leave).toEqual([7]);
   });
+
+  it('relays followers in move delta and snapshot', () => {
+    const m = new MapState(1);
+    m.add(mkPlayer(1));
+    m.drainDelta();
+    const fol = [{ x: 2, y: 1, d: 4, charSet: 'Pet', charIndex: 1 }];
+    expect(m.applyMove(1, 2, 1, 4, fol)).toBe(true);
+    const d = m.drainDelta();
+    expect(d!.move.get(1)!.followers).toEqual(fol);
+    expect(m.snapshotFor(99)[0].followers).toEqual(fol);
+  });
+
+  it('applyMove broadcasts when only followers change (stationary owner)', () => {
+    const m = new MapState(1);
+    m.add(mkPlayer(1));
+    m.drainDelta();
+    const fol = [{ x: 5, y: 5, d: 8 }];
+    // 玩家位置不变，但宝宝(followers)变化 → 不应被当作 no-op
+    expect(m.applyMove(1, 0, 0, 2, fol)).toBe(true);
+    expect(m.drainDelta()!.move.get(1)!.followers).toEqual(fol);
+  });
 });

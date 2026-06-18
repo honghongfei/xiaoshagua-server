@@ -1,10 +1,11 @@
-import type { OnlinePlayer } from '../player/playerService.js';
+import type { OnlinePlayer, FollowerView } from '../player/playerService.js';
 
 export interface MoveDelta {
   pid: number;
   x: number;
   y: number;
   d: number;
+  followers?: FollowerView[];
 }
 
 export interface ActionEvent {
@@ -29,6 +30,7 @@ export interface RemotePlayerView {
   charSet: string | null;
   charIndex: number;
   level: number;
+  followers: FollowerView[];
 }
 
 export function toView(p: OnlinePlayer): RemotePlayerView {
@@ -42,6 +44,7 @@ export function toView(p: OnlinePlayer): RemotePlayerView {
     charSet: p.charSet,
     charIndex: p.charIndex,
     level: p.level,
+    followers: p.followers ?? [],
   };
 }
 
@@ -70,15 +73,18 @@ export class MapState {
     return p;
   }
 
-  applyMove(pid: number, x: number, y: number, d: number): boolean {
+  applyMove(pid: number, x: number, y: number, d: number, followers?: FollowerView[]): boolean {
     const p = this.players.get(pid);
     if (!p) return false;
-    if (p.x === x && p.y === y && p.d === d) return false;
+    const posSame = p.x === x && p.y === y && p.d === d;
+    // 仅位置相同且本次未带 followers 才视为 no-op；followers 变化(挂机宝宝独立移动)也要广播
+    if (posSame && followers === undefined) return false;
     p.x = x;
     p.y = y;
     p.d = d;
     p.lastActAt = Date.now();
-    this.pending.move.set(pid, { pid, x, y, d });
+    if (followers !== undefined) p.followers = followers;
+    this.pending.move.set(pid, { pid, x, y, d, followers: p.followers });
     return true;
   }
 

@@ -20,6 +20,7 @@
  *   服务端推送 market.notify.evt：成交回执（在线即时 / 离线登录补发）。
  *
  * 入口：联机中心宫格「寄售行」。依赖 Util/Net/Core/Inventory，需在 Hub 之前加载。
+ * UI 画风：使用 XdRs_Online_Theme 注入的 .xsg-* 类（RMMZ 像素窗口风），需在 Theme 之后加载。
  */
 (() => {
   'use strict';
@@ -73,7 +74,7 @@
   function setStatus(s, isErr) {
     if (!statusEl) return;
     statusEl.textContent = s || '';
-    statusEl.style.color = isErr ? '#ff7070' : '#ffb84d';
+    statusEl.style.color = isErr ? '#ff7070' : '#ffe08a';
   }
   function reconcileInv() {
     if (G.Inv && typeof G.Inv.reconcileLocal === 'function') {
@@ -91,22 +92,20 @@
     if (modal) return;
     modal = document.createElement('div');
     modal.id = 'xsg-online-market';
-    Object.assign(modal.style, {
-      position: 'absolute', left: '0', top: '0', right: '0', bottom: '0',
-      background: 'rgba(0,0,0,0.45)', display: 'none', alignItems: 'center', justifyContent: 'center',
-      zIndex: String(Z_MODAL), fontFamily: 'sans-serif', color: '#eee',
-    });
+    modal.className = 'xsg-overlay';
+    modal.style.display = 'none';
+    modal.style.zIndex = String(Z_MODAL);
     modal.innerHTML = [
-      '<div style="background:#1b1c20;border-radius:10px;width:720px;max-width:96%;max-height:88%;display:flex;flex-direction:column;box-shadow:0 8px 24px rgba(0,0,0,0.6)">',
-      '  <div style="padding:10px 14px;border-bottom:1px solid #333;display:flex;align-items:center;gap:8px">',
-      '    <span style="flex:1;font-weight:bold;letter-spacing:1px">寄售行</span>',
-      '    <button data-tab="browse" style="background:#3a82ff;color:#fff;border:0;border-radius:4px;padding:4px 12px;cursor:pointer">浏览</button>',
-      '    <button data-tab="mine"   style="background:#333;color:#fff;border:0;border-radius:4px;padding:4px 12px;cursor:pointer">我的寄售</button>',
-      '    <button data-tab="sell"   style="background:#333;color:#fff;border:0;border-radius:4px;padding:4px 12px;cursor:pointer">上架</button>',
-      '    <button data-act="close"  style="background:#444;color:#fff;border:0;border-radius:3px;padding:2px 8px;cursor:pointer">×</button>',
+      '<div class="xsg-win" style="width:720px;max-width:96%;max-height:88%">',
+      '  <div class="xsg-titlebar">',
+      '    <span class="xsg-title">寄售行</span>',
+      '    <button class="xsg-btn xsg-tab" data-tab="browse">浏览</button>',
+      '    <button class="xsg-btn xsg-tab" data-tab="mine">我的寄售</button>',
+      '    <button class="xsg-btn xsg-tab" data-tab="sell">上架</button>',
+      '    <button class="xsg-btn-close" data-act="close">×</button>',
       '  </div>',
-      '  <div data-body style="flex:1;overflow-y:auto;padding:10px 14px;line-height:1.6;min-height:220px"></div>',
-      '  <div style="padding:6px 14px;border-top:1px solid #333"><span data-status style="font-size:12px;color:#ffb84d"></span></div>',
+      '  <div class="xsg-body" data-body></div>',
+      '  <div class="xsg-statusbar"><span class="xsg-status" data-status></span></div>',
       '</div>',
     ].join('');
     document.body.appendChild(modal);
@@ -126,7 +125,7 @@
   function updateTabBar() {
     if (!modal) return;
     modal.querySelectorAll('button[data-tab]').forEach((b) => {
-      b.style.background = b.dataset.tab === tab ? '#3a82ff' : '#333';
+      b.classList.toggle('is-active', b.dataset.tab === tab);
     });
   }
 
@@ -153,8 +152,8 @@
 
   // ---------- 浏览 ----------
   function renderBrowse() {
-    bodyEl.innerHTML = '<div style="color:#888">加载中…</div>';
-    Net.request('market.browse', { kind: browseState.kind || undefined, q: browseState.q || undefined, limit: 50 }, 6000)
+    bodyEl.innerHTML = '<div class="xsg-muted">加载中…</div>';
+    Net.request('market.browse', { limit: 50 }, 6000)
       .then((data) => paintBrowse(data || { listings: [], total: 0 }))
       .catch((err) => { bodyEl.innerHTML = '<div style="color:#ff7070">加载失败: ' + escapeHtml(err && err.message || '?') + '</div>'; });
   }
@@ -162,40 +161,38 @@
   function paintBrowse(data) {
     const filterBar = [
       '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">',
-      '  <select data-filter-kind style="background:#111;color:#fff;border:1px solid #333;border-radius:3px;padding:3px 6px">',
-      '    <option value=""', browseState.kind === '' ? ' selected' : '', '>全部</option>',
-      '    <option value="item"', browseState.kind === 'item' ? ' selected' : '', '>道具</option>',
-      '    <option value="weapon"', browseState.kind === 'weapon' ? ' selected' : '', '>武器</option>',
-      '    <option value="armor"', browseState.kind === 'armor' ? ' selected' : '', '>防具</option>',
-      '  </select>',
-      '  <input data-filter-q placeholder="按卖家名搜索" value="', escapeHtml(browseState.q), '" style="flex:1;background:#111;color:#fff;border:1px solid #333;border-radius:3px;padding:3px 6px"/>',
-      '  <button data-act="browse-refresh" style="background:#3a82ff;color:#fff;border:0;border-radius:3px;padding:3px 12px;cursor:pointer">刷新</button>',
+      '  <input data-filter-q class="xsg-input" placeholder="按物品名搜索" value="', escapeHtml(browseState.q), '" style="flex:1"/>',
+      '  <button data-act="browse-refresh" class="xsg-btn">搜索</button>',
       '</div>',
     ].join('');
-    const list = (data.listings || []);
+    let list = (data.listings || []);
+    if (browseState.q) {
+      const kw = browseState.q.toLowerCase();
+      list = list.filter((l) => displayName(l.kind, l.dataId).toLowerCase().indexOf(kw) >= 0);
+    }
     let rows;
     if (list.length === 0) {
-      rows = '<div style="color:#888;padding:8px 0">暂无在售挂单。</div>';
+      rows = '<div class="xsg-muted" style="padding:8px 0">暂无在售挂单。</div>';
     } else {
       rows = list.map((l) => {
         const total = l.unitPrice * l.count;
         const buyCtl = l.mine
-          ? '<span style="color:#888;font-size:12px">（我的）</span>'
+          ? '<span class="xsg-muted" style="font-size:12px">（我的）</span>'
           : [
-              '<input data-buy-qty type="number" min="1" max="' + l.count + '" value="1" style="width:58px;background:#111;color:#fff;border:1px solid #333;border-radius:3px;padding:2px 4px"/>',
-              '<button data-act="buy" data-id="' + l.id + '" data-max="' + l.count + '" style="background:#2c9c4a;color:#fff;border:0;border-radius:3px;padding:3px 12px;cursor:pointer">购买</button>',
+              '<input data-buy-qty class="xsg-input" type="number" min="1" max="' + l.count + '" value="1" style="width:58px"/>',
+              '<button data-act="buy" class="xsg-btn-primary" data-id="' + l.id + '" data-max="' + l.count + '">购买</button>',
             ].join('');
         return [
-          '<div data-listing="' + l.id + '" style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #2c2d33">',
-          '  <span style="flex:1">' + escapeHtml(displayName(l.kind, l.dataId)) + ' <span style="color:#888;font-size:11px">' + kindLabel(l.kind) + ' ×' + l.count + '</span></span>',
-          '  <span style="color:#9fd8ff;min-width:120px">卖家 ' + escapeHtml(l.sellerName || ('#' + l.sellerId)) + '</span>',
-          '  <span style="color:#ffd070;min-width:130px;text-align:right">单价 ' + fmtGold(l.unitPrice) + ' / 共 ' + fmtGold(total) + '</span>',
+          '<div class="xsg-row" data-listing="' + l.id + '">',
+          '  <span style="flex:1">' + escapeHtml(displayName(l.kind, l.dataId)) + ' <span class="xsg-muted" style="font-size:11px">' + kindLabel(l.kind) + ' ×' + l.count + '</span></span>',
+          '  <span class="xsg-cyan" style="min-width:120px">卖家 ' + escapeHtml(l.sellerName || ('#' + l.sellerId)) + '</span>',
+          '  <span class="xsg-gold" style="min-width:130px;text-align:right">单价 ' + fmtGold(l.unitPrice) + ' / 共 ' + fmtGold(total) + '</span>',
           '  <span style="display:flex;gap:4px;align-items:center">' + buyCtl + '</span>',
           '</div>',
         ].join('');
       }).join('');
       if (data.total > list.length) {
-        rows += '<div style="color:#888;padding:6px 0">仅显示前 ' + list.length + ' / ' + data.total + ' 条，请用筛选缩小范围。</div>';
+        rows += '<div class="xsg-muted" style="padding:6px 0">仅显示前 ' + list.length + ' / ' + data.total + ' 条，请用筛选缩小范围。</div>';
       }
     }
     bodyEl.innerHTML = filterBar + rows;
@@ -203,7 +200,7 @@
 
   // ---------- 我的寄售 ----------
   function renderMine() {
-    bodyEl.innerHTML = '<div style="color:#888">加载中…</div>';
+    bodyEl.innerHTML = '<div class="xsg-muted">加载中…</div>';
     Net.request('market.mine', {}, 6000)
       .then((data) => paintMine(data))
       .catch((err) => { bodyEl.innerHTML = '<div style="color:#ff7070">加载失败: ' + escapeHtml(err && err.message || '?') + '</div>'; });
@@ -212,24 +209,24 @@
   function paintMine(d) {
     const slotLine = '已开格 ' + d.usedSlots + ' / ' + d.slots + '（上限 ' + d.maxSlots + '）';
     const unlockBtn = (d.nextSlotPrice != null)
-      ? '<button data-act="unlock" style="background:#a0790f;color:#fff;border:0;border-radius:3px;padding:3px 12px;cursor:pointer">开下一格（' + fmtGold(d.nextSlotPrice) + ' 金币）</button>'
-      : '<span style="color:#888">已达最大格位</span>';
+      ? '<button data-act="unlock" class="xsg-btn-warn">开下一格（' + fmtGold(d.nextSlotPrice) + ' 金币）</button>'
+      : '<span class="xsg-muted">已达最大格位</span>';
     const head = [
-      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #2c2d33">',
-      '  <span style="flex:1">' + slotLine + '　金币 <b style="color:#ffd070">' + fmtGold(d.gold) + '</b></span>',
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid rgba(120,150,220,0.22)">',
+      '  <span style="flex:1">' + slotLine + '　金币 <b class="xsg-gold">' + fmtGold(d.gold) + '</b></span>',
       '  ' + unlockBtn,
       '</div>',
     ].join('');
     const list = d.listings || [];
     let rows;
     if (list.length === 0) {
-      rows = '<div style="color:#888;padding:6px 0">没有在售挂单。去「上架」挂点东西吧。</div>';
+      rows = '<div class="xsg-muted" style="padding:6px 0">没有在售挂单。去「上架」挂点东西吧。</div>';
     } else {
       rows = list.map((l) => [
-        '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #2c2d33">',
-        '  <span style="flex:1">' + escapeHtml(displayName(l.kind, l.dataId)) + ' <span style="color:#888;font-size:11px">' + kindLabel(l.kind) + ' 剩 ' + l.count + ' / ' + l.origCount + '</span></span>',
-        '  <span style="color:#ffd070;min-width:150px;text-align:right">单价 ' + fmtGold(l.unitPrice) + ' / 共 ' + fmtGold(l.unitPrice * l.count) + '</span>',
-        '  <button data-act="cancel" data-id="' + l.id + '" style="background:#a05050;color:#fff;border:0;border-radius:3px;padding:3px 12px;cursor:pointer">下架</button>',
+        '<div class="xsg-row">',
+        '  <span style="flex:1">' + escapeHtml(displayName(l.kind, l.dataId)) + ' <span class="xsg-muted" style="font-size:11px">' + kindLabel(l.kind) + ' 剩 ' + l.count + ' / ' + l.origCount + '</span></span>',
+        '  <span class="xsg-gold" style="min-width:150px;text-align:right">单价 ' + fmtGold(l.unitPrice) + ' / 共 ' + fmtGold(l.unitPrice * l.count) + '</span>',
+        '  <button data-act="cancel" class="xsg-btn-danger" data-id="' + l.id + '">下架</button>',
         '</div>',
       ].join('')).join('');
     }
@@ -253,30 +250,29 @@
       }
     };
     pushArr('item', $dataItems, $gameParty._items);
-    pushArr('weapon', $dataWeapons, $gameParty._weapons);
-    pushArr('armor', $dataArmors, $gameParty._armors);
+    // 暂时只开放道具寄售（武器/防具待后续开放）
     return out;
   }
 
   function renderSell() {
     const list = listSellable();
     if (list.length === 0) {
-      bodyEl.innerHTML = '<div style="color:#888;padding:8px 0">背包里没有可寄售的物品（关键道具不可寄售）。</div>';
+      bodyEl.innerHTML = '<div class="xsg-muted" style="padding:8px 0">背包里没有可寄售的物品（关键道具不可寄售）。</div>';
       return;
     }
     const rows = list.map((it) => {
       const key = it.kind + '#' + it.dataId;
       return [
-        '<div data-sell-row="' + key + '" data-kind="' + it.kind + '" data-id="' + it.dataId + '" data-have="' + it.have + '" style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #2c2d33">',
-        '  <span style="flex:1">' + escapeHtml(it.name) + ' <span style="color:#888;font-size:11px">' + kindLabel(it.kind) + ' 持有 ' + it.have + '</span></span>',
-        '  <label style="color:#9fd8ff">数量<input data-sell-count type="number" min="1" max="' + it.have + '" value="1" style="width:62px;background:#111;color:#fff;border:1px solid #333;border-radius:3px;padding:2px 4px;margin-left:4px"/></label>',
-        '  <label style="color:#9fd8ff">单价<input data-sell-price type="number" min="1" value="1" style="width:90px;background:#111;color:#fff;border:1px solid #333;border-radius:3px;padding:2px 4px;margin-left:4px"/></label>',
-        '  <span data-sell-total style="color:#ffd070;min-width:96px;text-align:right">共 1</span>',
-        '  <button data-act="create" style="background:#2c9c4a;color:#fff;border:0;border-radius:3px;padding:3px 12px;cursor:pointer">上架</button>',
+        '<div class="xsg-row" data-sell-row="' + key + '" data-kind="' + it.kind + '" data-id="' + it.dataId + '" data-have="' + it.have + '">',
+        '  <span style="flex:1">' + escapeHtml(it.name) + ' <span class="xsg-muted" style="font-size:11px">' + kindLabel(it.kind) + ' 持有 ' + it.have + '</span></span>',
+        '  <label class="xsg-cyan">数量<input data-sell-count class="xsg-input" type="number" min="1" max="' + it.have + '" value="1" style="width:62px;margin-left:4px"/></label>',
+        '  <label class="xsg-cyan">单价<input data-sell-price class="xsg-input" type="number" min="1" value="1" style="width:90px;margin-left:4px"/></label>',
+        '  <span data-sell-total class="xsg-gold" style="min-width:96px;text-align:right">共 1</span>',
+        '  <button data-act="create" class="xsg-btn-primary">上架</button>',
         '</div>',
       ].join('');
     }).join('');
-    bodyEl.innerHTML = '<div style="color:#888;margin-bottom:6px">挂单即从背包托管扣除；卖出收 20% 手续费（金币销毁）。</div>' + rows;
+    bodyEl.innerHTML = '<div class="xsg-muted" style="margin-bottom:6px">挂单即从背包托管扣除；卖出收 20% 手续费（金币销毁）。</div>' + rows;
   }
 
   function recalcSellTotal(row) {
@@ -313,9 +309,7 @@
     const act = btn.dataset.act;
     if (act === 'browse-refresh') {
       const qEl = bodyEl.querySelector('input[data-filter-q]');
-      const kEl = bodyEl.querySelector('select[data-filter-kind]');
       browseState.q = qEl ? qEl.value.trim() : '';
-      browseState.kind = kEl ? kEl.value : '';
       renderBrowse();
       return;
     }
@@ -391,7 +385,7 @@
     Object.assign(toastWrap.style, {
       position: 'absolute', right: '14px', bottom: '14px', width: '300px',
       display: 'flex', flexDirection: 'column', gap: '8px', zIndex: String(Z_TOAST),
-      fontFamily: 'sans-serif', fontSize: '13px', pointerEvents: 'none',
+      fontSize: '13px', pointerEvents: 'none',
     });
     document.body.appendChild(toastWrap);
     return toastWrap;
@@ -399,10 +393,7 @@
   function pushToast(html) {
     ensureToastWrap();
     const card = document.createElement('div');
-    Object.assign(card.style, {
-      background: 'rgba(20,20,28,0.96)', color: '#eee', border: '1px solid #2c9c4a',
-      borderRadius: '8px', padding: '10px 12px', boxShadow: '0 6px 20px rgba(0,0,0,0.6)',
-    });
+    card.className = 'xsg-toast';
     card.innerHTML = html;
     toastWrap.appendChild(card);
     setTimeout(() => { try { toastWrap.removeChild(card); } catch (e) { /* ignore */ } }, 9000);
@@ -412,7 +403,7 @@
     if (n.type === 'market_sold') {
       const tail = p.remaining > 0 ? ('，剩余 ' + p.remaining) : '，已售罄';
       return '💰 你的 <b>' + escapeHtml(displayName(p.kind, p.dataId)) + '</b> ×' + p.qty
-        + ' 卖给了 <b>' + escapeHtml(p.buyerName || ('#' + p.buyerId)) + '</b>，到手 <b style="color:#ffd070">'
+        + ' 卖给了 <b>' + escapeHtml(p.buyerName || ('#' + p.buyerId)) + '</b>，到手 <b class="xsg-gold">'
         + fmtGold(p.proceeds) + '</b> 金币（手续费 ' + fmtGold(p.fee) + '）' + tail;
     }
     if (n.type === 'market_bought') {
@@ -427,7 +418,7 @@
     if (items.length > 4) {
       const sold = items.filter((n) => n && n.type === 'market_sold');
       const gained = sold.reduce((a, n) => a + ((n.payload && n.payload.proceeds) | 0), 0);
-      pushToast('💰 你不在时寄售成交 <b>' + sold.length + '</b> 笔，合计到手 <b style="color:#ffd070">' + fmtGold(gained) + '</b> 金币');
+      pushToast('💰 你不在时寄售成交 <b>' + sold.length + '</b> 笔，合计到手 <b class="xsg-gold">' + fmtGold(gained) + '</b> 金币');
       return;
     }
     items.forEach((n) => pushToast(notifyText(n)));

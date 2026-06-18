@@ -217,46 +217,40 @@
     function build() {
       panel = document.createElement('div');
       panel.id = 'xsg-online-chat';
+      panel.className = 'xsg-win';
       Object.assign(panel.style, {
         position: 'absolute',
         left: '10px', bottom: '10px',
         width: '380px', height: '210px',
-        background: 'rgba(20,20,28,0.82)',
-        color: '#eee',
-        borderRadius: '6px',
-        fontFamily: 'sans-serif', fontSize: '12px',
+        fontSize: '12px',
         display: 'none',
         zIndex: '9000',
-        flexDirection: 'column',
-        boxShadow: '0 4px 14px rgba(0,0,0,0.6)',
       });
 
       const header = document.createElement('div');
-      Object.assign(header.style, {
-        padding: '6px 10px', borderBottom: '1px solid #333',
-        display: 'flex', alignItems: 'center', gap: '8px',
-      });
+      header.className = 'xsg-titlebar';
       header.innerHTML =
-        '<span style="font-weight:bold">聊天</span>' +
-        '<select data-sel="ch" style="flex:1;background:#111;color:#eee;border:1px solid #333;padding:2px 4px;border-radius:3px">' +
+        '<span class="xsg-title" style="font-size:15px">聊天</span>' +
+        '<select data-sel="ch" class="xsg-select" style="flex:1">' +
         '<option value="world">世界</option><option value="nearby" selected>附近</option><option value="whisper">私聊</option>' +
         '</select>' +
-        '<button data-act="close" style="background:#444;color:#fff;border:0;border-radius:3px;padding:2px 8px;cursor:pointer">×</button>';
+        '<button data-act="close" class="xsg-btn-close">×</button>';
       panel.appendChild(header);
 
       messagesEl = document.createElement('div');
-      Object.assign(messagesEl.style, { flex: '1', overflowY: 'auto', padding: '6px 10px', lineHeight: '1.55' });
+      messagesEl.className = 'xsg-body';
+      Object.assign(messagesEl.style, { minHeight: '0' });
       panel.appendChild(messagesEl);
 
       const inputRow = document.createElement('div');
-      Object.assign(inputRow.style, { display: 'flex', gap: '6px', padding: '6px 10px', borderTop: '1px solid #333' });
+      Object.assign(inputRow.style, { display: 'flex', gap: '6px', padding: '6px 8px 4px' });
       inputRow.innerHTML =
-        '<input data-input style="flex:1;background:#111;color:#fff;border:1px solid #333;padding:4px 8px;border-radius:3px;outline:none" maxlength="200" placeholder="输入消息后回车…" />' +
-        '<button data-act="send" style="background:#3a82ff;color:#fff;border:0;border-radius:3px;padding:4px 10px;cursor:pointer">发送</button>';
+        '<input data-input class="xsg-input" style="flex:1" maxlength="200" placeholder="输入消息后回车…" />' +
+        '<button data-act="send" class="xsg-btn-primary">发送</button>';
       panel.appendChild(inputRow);
 
       statusEl = document.createElement('div');
-      Object.assign(statusEl.style, { padding: '0 10px 4px', fontSize: '11px', color: '#ffb84d', minHeight: '14px' });
+      Object.assign(statusEl.style, { padding: '0 10px 4px', fontSize: '11px', color: '#fff2c2', minHeight: '14px' });
       panel.appendChild(statusEl);
 
       document.body.appendChild(panel);
@@ -278,7 +272,7 @@
     function setStatus(s, isErr) {
       if (!statusEl) return;
       statusEl.textContent = s || '';
-      statusEl.style.color = isErr ? '#ff7070' : '#ffb84d';
+      statusEl.style.color = isErr ? '#ff7070' : '#fff2c2';
     }
 
     function doSend() {
@@ -317,11 +311,11 @@
     function renderMsg(m) {
       const t = new Date(m.ts).toTimeString().slice(0, 5);
       const isSys = m.channel === '__sys__';
-      if (isSys) return `<div style="color:#9fd8ff;opacity:.85">[${t}] [系统] ${escape(m.text)}</div>`;
+      if (isSys) return `<div style="color:#2a5b8a;opacity:.9">[${t}] [系统] ${escape(m.text)}</div>`;
       const ch = m.channel === 'world' ? '世界' : m.channel === 'nearby' ? '附近' : '密';
-      const chColor = m.channel === 'world' ? '#a9ffa9' : m.channel === 'nearby' ? '#fff5a0' : '#ffaaff';
-      const targetTip = m.toPid ? ` → <a href="#" data-pid="${m.toPid}" style="color:#9fd8ff;text-decoration:none">[#${m.toPid}]</a>` : '';
-      return `<div>[${t}] <span style="color:${chColor}">[${ch}]</span> <a href="#" data-pid="${m.fromPid}" style="color:#ffd070;text-decoration:none">${escape(m.fromName)}</a>${targetTip}: ${escape(m.text)}</div>`;
+      const chColor = m.channel === 'world' ? '#2c8a2c' : m.channel === 'nearby' ? '#8a5a12' : '#b03a86';
+      const targetTip = m.toPid ? ` → <a href="#" data-pid="${m.toPid}" style="color:#2a5b8a;text-decoration:none">[#${m.toPid}]</a>` : '';
+      return `<div>[${t}] <span style="color:${chColor}">[${ch}]</span> <a href="#" data-pid="${m.fromPid}" style="color:#8a5a12;font-weight:bold;text-decoration:none">${escape(m.fromName)}</a>${targetTip}: ${escape(m.text)}</div>`;
     }
 
     function pushHistory(m) {

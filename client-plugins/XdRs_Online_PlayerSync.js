@@ -44,7 +44,7 @@
     Sprite_OtherPlayer.prototype = Object.create(Sprite_Character.prototype);
     Sprite_OtherPlayer.prototype.constructor = Sprite_OtherPlayer;
 
-    Sprite_OtherPlayer.prototype.initialize = function (view) {
+    Sprite_OtherPlayer.prototype.initialize = function (view, opts) {
       const ghost = new Game_Character();
       // 三步闭环 - 渲染兜底:
       //   1. server 给的 charSet 优先
@@ -67,8 +67,11 @@
       Sprite_Character.prototype.initialize.call(this, ghost);
       this._pid = view.pid;
       this._name = view.name || '';
-      this._nameSprite = this._makeNameSprite();
-      this.addChild(this._nameSprite);
+      this._noName = !!(opts && opts.withName === false);
+      if (!this._noName) {
+        this._nameSprite = this._makeNameSprite();
+        this.addChild(this._nameSprite);
+      }
     };
 
     Sprite_OtherPlayer.prototype._makeNameSprite = function () {
@@ -118,6 +121,28 @@
   // ---------- Player movement -> throttled report ----------
   let lastReport = 0;
   let lastSent = { x: -1, y: -1, d: -1 };
+  let lastSentFol = '';
+
+  // 采集本机可见的 Game_Follower(本体宝宝), 口径对齐玩家 _x|0/_y|0/direction
+  function collectFollowers() {
+    const out = [];
+    const data = $gamePlayer && $gamePlayer._followers && $gamePlayer._followers._data;
+    if (!data) return out;
+    for (const f of data) {
+      if (!f || !f.isVisible || !f.isVisible()) continue;
+      out.push({
+        x: f._x | 0,
+        y: f._y | 0,
+        d: f.direction(),
+        charSet: (f.characterName && f.characterName()) || null,
+        charIndex: (f.characterIndex && (f.characterIndex() | 0)) || 0,
+      });
+    }
+    return out;
+  }
+  function followersSig(fs) {
+    return fs.map((f) => f.x + ',' + f.y + ',' + f.d + ',' + f.charSet + ',' + f.charIndex).join('|');
+  }
 
   const _Game_Player_update = Game_Player.prototype.update;
   Game_Player.prototype.update = function (sceneActive) {
@@ -128,10 +153,15 @@
     const x = this._x | 0;
     const y = this._y | 0;
     const d = this.direction();
-    if (x === lastSent.x && y === lastSent.y && d === lastSent.d) return;
+    const followers = collectFollowers();
+    const folSig = followersSig(followers);
+    if (x === lastSent.x && y === lastSent.y && d === lastSent.d && folSig === lastSentFol) return;
     lastSent = { x, y, d };
+    lastSentFol = folSig;
     lastReport = now;
-    Net.emit('player.move', { x, y, d, ts: now });
+    const payload = { x, y, d, ts: now };
+    if (followers.length) payload.followers = followers;
+    Net.emit('player.move', payload);
   };
 
   // ---------- enterMap + sprite management ----------
@@ -161,10 +191,13 @@
       payload.charSet = charSet;
       payload.charIndex = charIndex;
     }
+    const fol = collectFollowers();
+    if (fol.length) payload.followers = fol;
     Net.request('player.enterMap', payload)
       .then((snap) => {
         Util.log('info', 'enterMap ok mapId=' + mapId + ' others=' + ((snap && snap.others) ? snap.others.length : 0));
         clearAllOthers();
+        if (window.XdRsOnline.Gather) window.XdRsOnline.Gather.onEnterSnapshot(snap);
         if (snap && snap.others) snap.others.forEach(addOther);
         lastSent = { x, y, d };
       })
@@ -175,6 +208,42 @@
 
   function currentSpriteset() {
     return SceneManager._scene && SceneManager._scene._spriteset;
+  }
+
+  // ---------- 远端宝宝(Follower) 精灵: 复用 Sprite_OtherPlayer(无名字) ----------
+  function createFollowerSprite(fv, ss) {
+    const fsp = new window.Sprite_OtherPlayer(fv, { withName: false });
+    if (ss && ss._characterSprites) ss._characterSprites.push(fsp);
+    if (ss && ss._tilemap) ss._tilemap.addChild(fsp);
+    return fsp;
+  }
+  function removeFollowerSprites(sp, ss) {
+    if (!sp || !sp._followers) return;
+    for (const fsp of sp._followers) {
+      if (ss && ss._characterSprites) {
+        const i = ss._characterSprites.indexOf(fsp);
+        if (i >= 0) ss._characterSprites.splice(i, 1);
+      }
+      if (fsp.parent) fsp.parent.removeChild(fsp);
+      if (typeof fsp.destroy === 'function') fsp.destroy();
+    }
+    sp._followers = null;
+  }
+  function syncOtherFollowers(sp, fols, ss) {
+    if (!sp._followers) sp._followers = [];
+    if (sp._followers.length !== fols.length) {
+      removeFollowerSprites(sp, ss);
+      sp._followers = fols.map((fv) => createFollowerSprite(fv, ss));
+      return;
+    }
+    fols.forEach((fv, i) => {
+      const fsp = sp._followers[i];
+      const ch = fsp && fsp._character;
+      if (ch && fv.charSet && (ch.characterName() !== fv.charSet || ch.characterIndex() !== (fv.charIndex || 0))) {
+        ch.setImage(fv.charSet, fv.charIndex || 0);
+      }
+      if (fsp) fsp.applyRemoteMove(fv.x, fv.y, fv.d);
+    });
   }
 
   function addOther(view) {
@@ -191,6 +260,7 @@
     Sync.others.set(view.pid, sp);
     if (ss._characterSprites) ss._characterSprites.push(sp);
     if (ss._tilemap) ss._tilemap.addChild(sp);
+    sp._followers = Array.isArray(view.followers) ? view.followers.map((fv) => createFollowerSprite(fv, ss)) : [];
   }
 
   function removeOther(pid) {
@@ -202,7 +272,31 @@
       const idx = ss._characterSprites.indexOf(sp);
       if (idx >= 0) ss._characterSprites.splice(idx, 1);
     }
+    removeFollowerSprites(sp, ss);
     if (sp.parent) sp.parent.removeChild(sp);
+    destroyOtherSprite(sp);
+  }
+
+  // 销毁离场玩家 sprite. 只 removeChild 不 destroy 会让独占的名字 Bitmap(每人一张 140x24)
+  // 持续泄漏(玩家进进出出越攒越多)。
+  //  - 名字 Bitmap 是本插件 new 出来的独占纹理 -> 必须显式 Bitmap.destroy() 释放 baseTexture + canvas。
+  //  - 角色贴图来自 ImageManager 共享缓存 -> 绝不能销毁其 baseTexture。RMMZ Sprite.prototype.destroy
+  //    固定用 {children:true, texture:true}(忽略入参), PIXI 默认 baseTexture:false, 只销毁本 sprite
+  //    自己的 Texture 包装, 不动共享 baseTexture, 因此 sp.destroy() 对共享贴图是安全的。
+  function destroyOtherSprite(sp) {
+    if (!sp) return;
+    try {
+      if (sp._nameSprite) {
+        const nb = sp._nameSprite.bitmap;
+        if (sp._nameSprite.parent) sp._nameSprite.parent.removeChild(sp._nameSprite);
+        sp._nameSprite.bitmap = null;
+        if (nb && typeof nb.destroy === 'function') nb.destroy();
+        sp._nameSprite = null;
+      }
+    } catch (e) { Util.log('warn', 'destroy name sprite failed: ' + (e && e.message)); }
+    try {
+      if (typeof sp.destroy === 'function') sp.destroy();
+    } catch (e) { Util.log('warn', 'destroy other sprite failed: ' + (e && e.message)); }
   }
 
   function clearAllOthers() {
@@ -219,6 +313,7 @@
         const sp = Sync.others.get(m.pid);
         if (sp) {
           sp.applyRemoteMove(m.x, m.y, m.d);
+          if (Array.isArray(m.followers)) syncOtherFollowers(sp, m.followers, currentSpriteset());
           sp._lastSeenAt = Util.now();
         }
       });
@@ -261,6 +356,7 @@
     const d = $gamePlayer.direction();
     Net.request('player.enterMap', { mapId, x, y, d }, 5000)
       .then((snap) => {
+        if (window.XdRsOnline.Gather) window.XdRsOnline.Gather.onEnterSnapshot(snap);
         const remoteIds = new Set();
         if (snap && snap.others) snap.others.forEach((v) => remoteIds.add(v.pid));
         // 1. 本地多余的 (服务端 snapshot 没有) → 移除
@@ -355,18 +451,13 @@
     if (_interactMenuRoot) return _interactMenuRoot;
     const root = document.createElement('div');
     root.id = 'xsg-online-interact';
+    root.className = 'xsg-win';
     Object.assign(root.style, {
       position: 'absolute',
       display: 'none',
-      background: 'rgba(20, 20, 28, 0.95)',
-      color: '#eee',
-      border: '1px solid #444',
-      borderRadius: '6px',
-      padding: '4px 0',
+      padding: '4px',
       minWidth: '128px',
       zIndex: '9100',
-      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.6)',
-      fontFamily: 'sans-serif',
       fontSize: '13px',
     });
     document.body.appendChild(root);
@@ -397,12 +488,14 @@
       btn.textContent = it.label;
       Object.assign(btn.style, {
         padding: '6px 14px',
+        borderRadius: '6px',
         cursor: it.disabled ? 'default' : 'pointer',
-        color: it.disabled ? '#9aa' : '#eee',
+        color: it.disabled ? '#8a5a12' : '#3f3315',
+        fontWeight: it.disabled ? 'bold' : 'normal',
         userSelect: 'none',
       });
       if (!it.disabled) {
-        btn.addEventListener('mouseenter', () => { btn.style.background = '#3a82ff'; });
+        btn.addEventListener('mouseenter', () => { btn.style.background = 'rgba(255,255,255,0.35)'; });
         btn.addEventListener('mouseleave', () => { btn.style.background = ''; });
         btn.addEventListener('click', (ev) => {
           ev.stopPropagation();

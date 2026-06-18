@@ -26,6 +26,14 @@ export interface CharacterPublic {
   gold: number;
 }
 
+export interface FollowerView {
+  x: number;
+  y: number;
+  d: number;
+  charSet?: string | null;
+  charIndex?: number;
+}
+
 export interface OnlinePlayer {
   pid: number;
   accountId: number;
@@ -40,6 +48,7 @@ export interface OnlinePlayer {
   charIndex: number;
   level: number;
   lastActAt: number;
+  followers?: FollowerView[];
 }
 
 const onlineByPid = new Map<number, OnlinePlayer>();

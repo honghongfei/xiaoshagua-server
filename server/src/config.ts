@@ -45,6 +45,11 @@ export const config = {
   marketMaxStack: num(process.env.MARKET_MAX_STACK, 9_999), // 对齐 ITEM_CAP
   marketBrowsePageMax: num(process.env.MARKET_BROWSE_PAGE_MAX, 50),
 
+  // 地上物云端共享（Cloud-Shared Gather）
+  gatherTickMs: num(process.env.GATHER_TICK_MS, 0), // 0 = 复用 worldTickMs（startGatherTick 兜底）
+  gatherClaimRangeTiles: num(process.env.GATHER_CLAIM_RANGE, 2),
+  gatherDefaultRespawnMs: num(process.env.GATHER_DEFAULT_RESPAWN_MS, 1_800_000), // 每点被采后 30 分钟重生
+
   logLevel: str(process.env.LOG_LEVEL, 'info'),
 } as const;
 

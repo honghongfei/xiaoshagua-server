@@ -8,6 +8,7 @@ import {
   persistPosition,
   pruneExpiredTokens,
   type OnlinePlayer,
+  type FollowerView,
 } from '../player/playerService.js';
 import { MapState, toView } from './mapState.js';
 
@@ -121,12 +122,18 @@ export function leaveMap(pid: number, mapId: number): void {
   }
 }
 
-export function moveOnMap(pid: number, x: number, y: number, d: number): boolean {
+export function moveOnMap(
+  pid: number,
+  x: number,
+  y: number,
+  d: number,
+  followers?: FollowerView[],
+): boolean {
   const p = getOnlineByPid(pid);
   if (!p) return false;
   const map = maps.get(p.mapId);
   if (!map) return false;
-  return map.applyMove(pid, x, y, d);
+  return map.applyMove(pid, x, y, d, followers);
 }
 
 export function actOnMap(pid: number, type: string): boolean {

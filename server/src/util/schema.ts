@@ -33,10 +33,21 @@ export const AuthRegister = z.object({
 export const AuthResume = z.object({
   token: z.string().min(8).max(64),
   lastSeq: z.number().int().nonnegative().optional(),
+  clientVer: z.string().max(32).optional(),
 });
 
 export const CharRename = z.object({
   name: CharName,
+});
+
+const Follower = z.object({
+  x: z.number().int().min(0).max(999),
+  y: z.number().int().min(0).max(999),
+  d: z.number().int().refine((v) => v === 2 || v === 4 || v === 6 || v === 8, {
+    message: 'd must be 2/4/6/8',
+  }),
+  charSet: z.string().max(64).nullable().optional(),
+  charIndex: z.number().int().min(0).max(7).optional(),
 });
 
 export const PlayerEnterMap = z.object({
@@ -48,6 +59,7 @@ export const PlayerEnterMap = z.object({
   }),
   charSet: z.string().max(64).optional(),
   charIndex: z.number().int().min(0).max(7).optional(),
+  followers: z.array(Follower).max(8).optional(),
 });
 
 export const PlayerMove = z.object({
@@ -57,10 +69,15 @@ export const PlayerMove = z.object({
     message: 'd must be 2/4/6/8',
   }),
   ts: z.number().int().nonnegative().optional(),
+  followers: z.array(Follower).max(8).optional(),
 });
 
 export const PlayerAction = z.object({
   type: z.string().min(1).max(24),
+});
+
+export const GatherClaim = z.object({
+  rid: z.number().int().positive(),
 });
 
 export const ChatSend = z.object({

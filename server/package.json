@@ -14,7 +14,8 @@
     "test:watch": "vitest",
     "migrate": "tsx src/db/migrate.ts",
     "loadtest": "tsx scripts/loadtest.ts",
-    "gm": "tsx scripts/gm.ts"
+    "gm": "tsx scripts/gm.ts",
+    "publish:release": "node scripts/publish-release.mjs"
   },
   "dependencies": {
     "argon2": "^0.41.1",

@@ -6,6 +6,7 @@ import { listOnline, resume as resumeSession } from '../domain/player/playerServ
 import { stats as worldStats } from '../domain/world/worldService.js';
 import { uploadSave } from '../domain/storage/storageService.js';
 import { installRouter } from './router.js';
+import { handleUpdate } from './updateRoute.js';
 
 // H8 修：/stats 加 basic auth (token 来自 .env 的 STATS_TOKEN, 空则要求公网必须本机访问)
 const STATS_TOKEN = process.env.STATS_TOKEN || '';
@@ -48,6 +49,8 @@ function buildStats(): Record<string, unknown> {
 export function startServer(): Promise<ServerHandle> {
   return new Promise((resolve, reject) => {
     const httpServer = http.createServer((req, res) => {
+      // 云更新: GET /update/manifest, GET /update/download/<file> (含 Range 断点续传)
+      if (handleUpdate(req, res)) return;
       if (req.url === '/healthz') {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ ok: true, ts: Date.now() }));

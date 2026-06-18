@@ -8,6 +8,7 @@ import {
   AuthResume,
   CharRename,
   ChatSend,
+  GatherClaim,
   InventoryGainGold,
   InventoryGainItem,
   InventoryReplace,
@@ -46,6 +47,13 @@ import {
   startTick,
   stats,
 } from '../domain/world/worldService.js';
+import {
+  attachGatherIo,
+  startGatherTick,
+  tryClaim,
+  snapshotForMap,
+  isMapManaged,
+} from '../domain/gather/gatherService.js';
 import {
   attachChatIo,
   broadcastSystem,
@@ -131,6 +139,7 @@ import {
   TradeRespond,
 } from '../util/schema.js';
 import { attachSession, takeToken } from './middleware.js';
+import { assertClientVersion } from '../domain/update/versionGate.js';
 import { failAck, okAck, type AckResponse, type GameSocket } from './types.js';
 
 type AckFn = (resp: AckResponse<unknown>) => void;
@@ -180,6 +189,8 @@ function clearPendingOffline(pid: number): boolean {
 
 export function installRouter(io: Server): void {
   attachIo(io);
+  attachGatherIo(io);
+  startGatherTick();
   attachChatIo(io);
   attachStateIo(io);
   attachTradeIo(io);
@@ -215,6 +226,7 @@ export function installRouter(io: Server): void {
       try {
         if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
         const input = parse(AuthRegister, raw);
+        assertClientVersion(input.clientVer);
         const session = await register(input);
         const character = pickCharacterForClient(getCharacter(session.characterId));
         bindSession(socket, session.accountId, session.characterId, session.token);
@@ -229,6 +241,7 @@ export function installRouter(io: Server): void {
       try {
         if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
         const input = parse(AuthLogin, raw);
+        assertClientVersion(input.clientVer);
         const session = await login(input);
         const character = pickCharacterForClient(getCharacter(session.characterId));
         bindSession(socket, session.accountId, session.characterId, session.token);
@@ -243,6 +256,7 @@ export function installRouter(io: Server): void {
       try {
         if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
         const input = parse(AuthResume, raw);
+        assertClientVersion(input.clientVer);
         const { session, character } = resume(input.token);
         bindSession(socket, session.accountId, session.characterId, session.token);
         cb?.(okAck({ token: session.token, character }));
@@ -309,6 +323,7 @@ export function installRouter(io: Server): void {
           charIndex: effectiveCharIndex,
           level: character.level,
           lastActAt: Date.now(),
+          followers: input.followers ?? previous?.followers ?? [],
         });
         const player = getOnlineBySocket(socket.id);
         if (!player) throw new AppError('INTERNAL', 'online state lost', 500);
@@ -317,7 +332,11 @@ export function installRouter(io: Server): void {
         if (!wasOnline && !wasReconnect) {
           broadcastSystem(`${player.name} 上线了`);
         }
-        cb?.(okAck(snapshot));
+        cb?.(okAck({
+          ...snapshot,
+          resources: snapshotForMap(input.mapId),
+          gatherManaged: isMapManaged(input.mapId),
+        }));
         // 进图后补发离线期间攒下的寄售通知（卖出回执等）。
         flushMarketNotifications(io, session.pid);
       } catch (err) {
@@ -331,13 +350,36 @@ export function installRouter(io: Server): void {
         const session = socket.session;
         if (!session.authed || session.pid === null) return;
         const input = parse(PlayerMove, raw);
-        moveOnMap(session.pid, input.x, input.y, input.d);
+        moveOnMap(session.pid, input.x, input.y, input.d, input.followers);
       } catch (err) {
         if (isAppError(err)) {
           log.debug({ code: err.code, msg: err.message }, 'player.move rejected');
         } else {
           log.warn({ err }, 'player.move error');
         }
+      }
+    });
+
+    socket.on('gather.claim', (raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const session = socket.session;
+        if (!session.authed || session.pid === null) throw new AppError('NO_AUTH', 'login required');
+        const input = parse(GatherClaim, raw);
+        const r = tryClaim(session.pid, input.rid);
+        if (r.ok && r.grant) {
+          try {
+            invGainItem(r.grant.characterId, 'item', r.grant.itemId, r.grant.qty, 'gather');
+          } catch (e) {
+            log.warn({ err: e, rid: input.rid }, 'gather grant failed after claim');
+          }
+          cb?.(okAck({ rid: input.rid }));
+        } else {
+          cb?.(failAck(r.code ?? 'CLAIM_FAILED', 'gather claim failed'));
+        }
+      } catch (err) {
+        sendError(socket, cb, err);
       }
     });
 

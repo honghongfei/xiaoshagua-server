@@ -105,6 +105,8 @@
   function downloadAndEnter(onError) {
     Net.request('save.download', {}, 12000).then((res) => {
       if (!res || !res.found || !res.blob) {
+        // 云端确认无存档: 标记"已与云端对齐(无档)", 放开后续上传(创建首份云档)
+        if (G.SaveCloud && typeof G.SaveCloud.markNoCloud === 'function') G.SaveCloud.markNoCloud();
         startFreshNewGame();
         return;
       }
@@ -114,6 +116,8 @@
           if (typeof onError === 'function') onError('云存档结构为空');
           return;
         }
+        // 已应用云档: 记录 baseTs + 解除上传门闩, 之后自动上传才允许带正确 baseTs 覆盖
+        if (G.SaveCloud && typeof G.SaveCloud.markCloudApplied === 'function') G.SaveCloud.markCloudApplied(res.blob.ts);
         SceneManager.goto(Scene_Map);
       } catch (e) {
         console.error('[XSG-Online] cloud save parse failed', e);
@@ -124,20 +128,28 @@
     });
   }
 
+  // 登录后进入游戏: 直接以 save.download 为准(它本身已区分"无云档"和"读取失败"),
+  // 去掉原来多余的 save.exists 预检——它一旦网络失败就默认新游戏, 紧接着自动上传会把
+  // 空档/本地档推上云覆盖真实云存档(admin 云档被覆盖的根因之一)。
   function afterLogin() {
     flash('登录成功：' + (Core.session.character.name || ('#' + Core.session.character.pid)));
-    Net.request('save.exists', {}, 6000).then((r) => {
-      if (r && r.exists) {
-        downloadAndEnter((msg) => {
-          alert('下载存档失败：' + msg + '\n将以新游戏开始');
-          startFreshNewGame();
-        });
+    enterWithCloud();
+  }
+
+  function enterWithCloud() {
+    downloadAndEnter((msg) => {
+      // 读取失败(网络/解析): 绝不默认新游戏, 让用户选, 默认重试读云档
+      const retry = window.confirm(
+        '读取云存档失败：' + msg + '\n\n' +
+        '【确定】重试读取云存档（推荐）\n' +
+        '【取消】以新游戏开始（警告：之后的存档会覆盖云端！）'
+      );
+      if (retry) {
+        enterWithCloud();
       } else {
+        if (G.SaveCloud && typeof G.SaveCloud.markNoCloud === 'function') G.SaveCloud.markNoCloud();
         startFreshNewGame();
       }
-    }).catch((err) => {
-      alert('查询云存档失败：' + ((err && err.message) || '未知错误') + '\n将以新游戏开始');
-      startFreshNewGame();
     });
   }
 
@@ -154,6 +166,7 @@
 
   Window_OnlineMenuCommand.prototype.makeCommandList = function () {
     this.addCommand('进入游戏（云存档继续）', 'enter');
+    this.addCommand('改名', 'rename');
     this.addCommand('退出联机', 'logout');
     this.addCommand('取消',     'cancel');
   };
@@ -203,7 +216,7 @@
 
   Scene_OnlineMenu.prototype.commandWindowRect = function () {
     const ww = 480;
-    const wh = this.calcWindowHeight(3, true);
+    const wh = this.calcWindowHeight(4, true);
     const wx = Math.floor((Graphics.boxWidth - ww) / 2);
     const wy = Math.floor((Graphics.boxHeight - wh) / 2);
     return new Rectangle(wx, wy, ww, wh);
@@ -213,6 +226,7 @@
     const rect = this.commandWindowRect();
     this._commandWindow = new Window_OnlineMenuCommand(rect);
     this._commandWindow.setHandler('enter',  this.commandEnter.bind(this));
+    this._commandWindow.setHandler('rename', this.commandRename.bind(this));
     this._commandWindow.setHandler('logout', this.commandLogout.bind(this));
     this._commandWindow.setHandler('cancel', this.commandCancel.bind(this));
     this.addWindow(this._commandWindow);
@@ -236,6 +250,33 @@
       this.refreshHelp('连接失败：' + ((err && err.message) || '未知错误'));
       this._commandWindow.activate();
     });
+  };
+
+  Scene_OnlineMenu.prototype.commandRename = function () {
+    if (!Core.session || !Core.session.character) {
+      this.refreshHelp('未登录，操作取消');
+      this._commandWindow.activate();
+      return;
+    }
+    const cur = Core.session.character.name || '';
+    const input = window.prompt('输入新角色名（1~12 位）:', cur);
+    if (input == null) { this._commandWindow.activate(); return; }
+    const name = String(input).trim();
+    if (!name) { this.refreshHelp('名字不能为空'); this._commandWindow.activate(); return; }
+    this._commandWindow.deactivate();
+    this.refreshHelp('正在改名…');
+    Net.connect()
+      .then(() => Net.request('character.rename', { name }, 6000))
+      .then((r) => {
+        const newName = (r && r.name) || name;
+        if (Core.session && Core.session.character) Core.session.character.name = newName;
+        this.refreshHelp('已改名为：' + newName);
+        this._commandWindow.activate();
+      })
+      .catch((err) => {
+        this.refreshHelp('改名失败：' + ((err && err.code ? err.code + ' ' : '') + (err && err.message || '?')));
+        this._commandWindow.activate();
+      });
   };
 
   Scene_OnlineMenu.prototype.commandLogout = function () {
@@ -418,25 +459,22 @@
   function buildLoginRoot() {
     loginRoot = document.createElement('div');
     loginRoot.id = 'xsg-online-login';
+    loginRoot.className = 'xsg-overlay';
     Object.assign(loginRoot.style, {
-      position: 'absolute',
-      left: '0', top: '0', right: '0', bottom: '0',
-      background: 'rgba(0,0,0,0.55)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
       zIndex: '9999',
-      fontFamily: 'sans-serif', color: '#fff',
     });
     loginRoot.innerHTML = [
-      '<div data-modal style="background:#1f1f24;padding:22px 26px;border-radius:10px;min-width:300px;box-shadow:0 6px 32px rgba(0,0,0,.5)">',
-      '  <div style="font-size:18px;margin-bottom:14px;text-align:center;letter-spacing:2px">小傻瓜·联机服</div>',
-      '  <div style="margin-bottom:8px"><input name="u" placeholder="账号 (3~16位)" autocomplete="off" style="width:100%;padding:8px;border-radius:4px;border:1px solid #333;background:#111;color:#fff;box-sizing:border-box"/></div>',
-      '  <div style="margin-bottom:8px"><input name="p" type="password" placeholder="密码 (6~64位)" autocomplete="off" style="width:100%;padding:8px;border-radius:4px;border:1px solid #333;background:#111;color:#fff;box-sizing:border-box"/></div>',
+      '<div data-modal class="xsg-win" style="min-width:300px;padding:18px 22px">',
+      '  <div class="xsg-title" style="font-size:18px;margin-bottom:14px;text-align:center">小傻瓜·联机服</div>',
+      '  <div style="margin-bottom:8px"><input name="u" class="xsg-input" placeholder="账号 (3~16位)" autocomplete="off" style="width:100%;box-sizing:border-box"/></div>',
+      '  <div style="margin-bottom:8px"><input name="p" type="password" class="xsg-input" placeholder="密码 (6~64位)" autocomplete="off" style="width:100%;box-sizing:border-box"/></div>',
+      '  <div style="margin-bottom:8px"><input name="cn" class="xsg-input" placeholder="角色名 (注册填, 1~12位, 选填; 留空默认用账号名)" autocomplete="off" maxlength="12" style="width:100%;box-sizing:border-box"/></div>',
       '  <div style="display:flex;gap:8px;margin-top:6px">',
-      '    <button data-act="login"    style="flex:1;padding:8px;border-radius:4px;border:0;background:#3a82ff;color:#fff;cursor:pointer">登录</button>',
-      '    <button data-act="register" style="flex:1;padding:8px;border-radius:4px;border:0;background:#2c9c4a;color:#fff;cursor:pointer">注册</button>',
-      '    <button data-act="cancel"   style="flex:0 0 60px;padding:8px;border-radius:4px;border:0;background:#555;color:#fff;cursor:pointer">取消</button>',
+      '    <button data-act="login"    class="xsg-btn-primary" style="flex:1">登录</button>',
+      '    <button data-act="register" class="xsg-btn" style="flex:1">注册</button>',
+      '    <button data-act="cancel"   class="xsg-btn-danger" style="flex:0 0 60px">取消</button>',
       '  </div>',
-      '  <div data-status style="margin-top:10px;font-size:12px;color:#ffb84d;min-height:16px;text-align:center"></div>',
+      '  <div data-status style="margin-top:10px;font-size:12px;color:#fff2c2;min-height:16px;text-align:center"></div>',
       '</div>',
     ].join('');
     document.body.appendChild(loginRoot);
@@ -457,8 +495,9 @@
         if (act === 'cancel') { LoginOverlay.close(false); return; }
         const u = loginRoot.querySelector('input[name=u]').value.trim();
         const p = loginRoot.querySelector('input[name=p]').value;
+        const cn = (loginRoot.querySelector('input[name=cn]').value || '').trim();
         if (!u || !p) { setStatus('账号、密码必填'); return; }
-        doSubmit(act, u, p);
+        doSubmit(act, u, p, cn);
       });
       btn.addEventListener('mousedown', (e) => { e.stopPropagation(); });
       btn.addEventListener('mouseup',   (e) => { e.stopPropagation(); });
@@ -474,13 +513,15 @@
     });
   }
 
-  function doSubmit(act, u, p) {
+  function doSubmit(act, u, p, charName) {
     setBusy(true);
     setStatus('正在连接服务器…');
     Net.connect()
       .then(() => {
         setStatus(act === 'login' ? '登录中…' : '注册中…');
-        return Net.request('auth.' + act, { username: u, password: p, clientVer: G.version });
+        const payload = { username: u, password: p, clientVer: G.version };
+        if (act === 'register' && charName) payload.charName = charName;
+        return Net.request('auth.' + act, payload);
       })
       .then((resp) => {
         Core.setSession({ token: resp.token, character: resp.character });

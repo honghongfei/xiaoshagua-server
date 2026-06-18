@@ -32,29 +32,32 @@
 
   // ---------- UI ----------
   let modal = null;
+  // 非阻塞交易邀请提示(替代 window.confirm 阻塞弹窗)
+  let inviteEl = null;
+  let inviteTicker = null;
+  let inviteDeadline = 0;
+  let pendingInviteId = null;
 
   function ensureUI() {
     if (modal) return;
     modal = document.createElement('div');
     modal.id = 'xsg-online-trade';
+    modal.className = 'xsg-overlay';
     Object.assign(modal.style, {
-      position: 'absolute', left: '0', top: '0', right: '0', bottom: '0',
-      background: 'rgba(0,0,0,0.4)',
-      display: 'none', alignItems: 'center', justifyContent: 'center',
-      zIndex: '9100', fontFamily: 'sans-serif', color: '#eee',
+      display: 'none', zIndex: '9100',
     });
     modal.innerHTML = [
-      '<div style="background:#1b1c20;border-radius:10px;width:640px;max-width:95%;display:flex;flex-direction:column;box-shadow:0 8px 24px rgba(0,0,0,0.6)">',
-      '  <div style="padding:10px 14px;border-bottom:1px solid #333;display:flex;align-items:center;gap:8px"><span data-title style="flex:1;font-weight:bold">交易</span><button data-act="close" style="background:#444;color:#fff;border:0;border-radius:3px;padding:2px 8px;cursor:pointer">×</button></div>',
-      '  <div style="display:flex;gap:0">',
-      '    <div data-side="me"   style="flex:1;padding:10px 12px;border-right:1px solid #333"></div>',
-      '    <div data-side="peer" style="flex:1;padding:10px 12px;background:#181a1f"></div>',
+      '<div class="xsg-win" style="width:640px;max-width:95%">',
+      '  <div class="xsg-titlebar"><span data-title class="xsg-title">交易</span><button data-act="close" class="xsg-btn-close">×</button></div>',
+      '  <div class="xsg-body" style="display:flex;gap:0;padding:0">',
+      '    <div data-side="me"   style="flex:1;padding:10px 12px;border-right:2px solid var(--xsg-panel-edge)"></div>',
+      '    <div data-side="peer" style="flex:1;padding:10px 12px"></div>',
       '  </div>',
-      '  <div style="padding:8px 14px;border-top:1px solid #333;display:flex;gap:8px;align-items:center">',
-      '    <div data-status style="flex:1;font-size:12px;color:#ffb84d"></div>',
-      '    <button data-act="lock"    style="background:#3a82ff;color:#fff;border:0;border-radius:3px;padding:6px 12px;cursor:pointer">锁定</button>',
-      '    <button data-act="confirm" style="background:#2c9c4a;color:#fff;border:0;border-radius:3px;padding:6px 12px;cursor:pointer">确认</button>',
-      '    <button data-act="cancel"  style="background:#a05050;color:#fff;border:0;border-radius:3px;padding:6px 12px;cursor:pointer">取消</button>',
+      '  <div class="xsg-statusbar" style="display:flex;gap:8px;align-items:center">',
+      '    <div data-status class="xsg-status" style="flex:1;font-size:12px"></div>',
+      '    <button data-act="lock"    class="xsg-btn">锁定</button>',
+      '    <button data-act="confirm" class="xsg-btn-primary">确认</button>',
+      '    <button data-act="cancel"  class="xsg-btn-danger">取消</button>',
       '  </div>',
       '</div>',
     ].join('');
@@ -86,6 +89,33 @@
     modal.querySelector('button[data-act=confirm]').addEventListener('click', () => {
       if (Trade.current) Net.request('trade.confirm', { tradeId: Trade.current.tradeId }).catch(handleErr);
     });
+
+    // 事件委托: "我方"面板内的金币输入 / 加物品 / 移除物品按钮都是 render() 用 innerHTML
+    // 重建的子节点. 把监听绑在持久容器上一次, 不随每次 render 重复 addEventListener.
+    const meSide = modal.querySelector('div[data-side=me]');
+    if (meSide) {
+      meSide.addEventListener('change', (e) => {
+        const t = e.target;
+        if (t && t.matches && t.matches('input[data-goldedit]')) {
+          sendOffer({ gold: Number(t.value) | 0 });
+        }
+      });
+      meSide.addEventListener('click', (e) => {
+        const t = e.target;
+        if (!t || !t.closest) return;
+        if (t.closest('button[data-act=additem]')) {
+          promptAddItem();
+          return;
+        }
+        const rm = t.closest('button[data-rmitem]');
+        if (rm && Trade.current) {
+          const kind = rm.dataset.kind;
+          const id = Number(rm.dataset.id);
+          const items = Trade.current.mySide.items.filter((it) => !(it.kind === kind && it.dataId === id));
+          sendOffer({ items });
+        }
+      });
+    }
   }
 
   function handleErr(err) {
@@ -97,7 +127,7 @@
     if (!modal) return;
     const el = modal.querySelector('[data-status]');
     el.textContent = s || '';
-    el.style.color = isErr ? '#ff7070' : '#ffb84d';
+    el.style.color = isErr ? '#ff7070' : '#fff2c2';
   }
 
   // ---------- Render ----------
@@ -124,21 +154,20 @@
     if (me && me.confirmed && peer && peer.confirmed) setStatus('双方确认，正在提交…');
     else if (me && me.locked && peer && peer.locked) setStatus('双方已锁定，可点确认');
     else if (me && me.locked) setStatus('已锁定，等对方');
-
-    bindEditing();
+    // 编辑事件已在 ensureUI() 用委托绑定, render 不再重复 addEventListener
   }
 
   function renderSide(side, isMe) {
     const head = (isMe ? '我' : '对方') + (side.locked ? ' 🔒' : '') + (side.confirmed ? ' ✓' : '');
     const goldEditor = isMe
-      ? `金币：<input data-goldedit type="number" min="0" value="${side.gold | 0}" style="width:90px;background:#111;color:#fff;border:1px solid #333;padding:2px 4px;border-radius:3px"/>`
-      : `金币：<b>${side.gold | 0}</b>`;
+      ? `金币：<input data-goldedit class="xsg-input" type="number" min="0" value="${side.gold | 0}" style="width:90px"/>`
+      : `金币：<b class="xsg-gold">${side.gold | 0}</b>`;
     const itemRows = (side.items || []).map((it) => {
       const name = displayItem(it);
-      const rm = isMe ? `<button data-rmitem data-kind="${it.kind}" data-id="${it.dataId}" style="background:#a05050;color:#fff;border:0;border-radius:3px;padding:0 6px;font-size:11px;margin-left:6px;cursor:pointer">移</button>` : '';
+      const rm = isMe ? `<button data-rmitem data-kind="${it.kind}" data-id="${it.dataId}" class="xsg-btn-danger" style="font-size:11px;padding:0 6px;margin-left:6px">移</button>` : '';
       return `<div style="padding:1px 0">${escape(name)} ×${it.count}${rm}</div>`;
-    }).join('') || '<div style="color:#888">（无物品）</div>';
-    const addBtn = isMe ? `<button data-act="additem" style="background:#3a82ff;color:#fff;border:0;border-radius:3px;padding:2px 8px;font-size:11px;cursor:pointer;margin-top:4px">+ 物品</button>` : '';
+    }).join('') || '<div class="xsg-muted">（无物品）</div>';
+    const addBtn = isMe ? `<button data-act="additem" class="xsg-btn-primary" style="font-size:11px;padding:2px 8px;margin-top:4px">+ 物品</button>` : '';
     return `
       <div style="font-weight:bold;margin-bottom:6px">${head}</div>
       <div style="margin-bottom:6px">${goldEditor}</div>
@@ -155,24 +184,6 @@
       if (data && data.name) return data.name + ' (' + it.kind + '#' + it.dataId + ')';
     }
     return it.kind + '#' + it.dataId;
-  }
-
-  function bindEditing() {
-    const me = modal.querySelector('div[data-side=me]');
-    const goldInp = me.querySelector('input[data-goldedit]');
-    if (goldInp) {
-      goldInp.addEventListener('change', () => sendOffer({ gold: Number(goldInp.value) | 0 }));
-    }
-    const addBtn = me.querySelector('button[data-act=additem]');
-    if (addBtn) addBtn.addEventListener('click', promptAddItem);
-    me.querySelectorAll('button[data-rmitem]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const kind = btn.dataset.kind;
-        const id = Number(btn.dataset.id);
-        const items = Trade.current.mySide.items.filter((it) => !(it.kind === kind && it.dataId === id));
-        sendOffer({ items });
-      });
-    });
   }
 
   // 三步闭环 - 交易加物品 UI
@@ -204,20 +215,17 @@
     if (pickerRoot) return pickerRoot;
     pickerRoot = document.createElement('div');
     pickerRoot.id = 'xsg-online-trade-picker';
+    pickerRoot.className = 'xsg-overlay';
     Object.assign(pickerRoot.style, {
-      position: 'absolute',
-      left: '0', top: '0', right: '0', bottom: '0',
-      background: 'rgba(0, 0, 0, 0.55)',
-      display: 'none', alignItems: 'center', justifyContent: 'center',
-      zIndex: '9200', fontFamily: 'sans-serif', color: '#eee',
+      display: 'none', zIndex: '9200',
     });
     pickerRoot.innerHTML = [
-      '<div style="background:#1b1c20;border-radius:10px;width:520px;max-width:95%;max-height:80%;display:flex;flex-direction:column;box-shadow:0 8px 24px rgba(0,0,0,0.6)">',
-      '  <div style="padding:10px 14px;border-bottom:1px solid #333;display:flex;align-items:center;gap:8px">',
-      '    <span style="flex:1;font-weight:bold">选择物品加入交易</span>',
-      '    <button data-act="close-picker" style="background:#444;color:#fff;border:0;border-radius:3px;padding:2px 8px;cursor:pointer">×</button>',
+      '<div class="xsg-win" style="width:520px;max-width:95%;max-height:80%">',
+      '  <div class="xsg-titlebar">',
+      '    <span class="xsg-title">选择物品加入交易</span>',
+      '    <button data-act="close-picker" class="xsg-btn-close">×</button>',
       '  </div>',
-      '  <div data-picker-list style="flex:1;overflow-y:auto;padding:6px 14px;line-height:1.7"></div>',
+      '  <div data-picker-list class="xsg-body"></div>',
       '</div>',
     ].join('');
     document.body.appendChild(pickerRoot);
@@ -246,7 +254,7 @@
     const list = listOwnedItems();
     const listEl = pickerRoot.querySelector('[data-picker-list]');
     if (list.length === 0) {
-      listEl.innerHTML = '<div style="color:#888">背包是空的，没有可交易的物品。</div>';
+      listEl.innerHTML = '<div class="xsg-muted">背包是空的，没有可交易的物品。</div>';
     } else {
       const offered = Trade.current.mySide.items || [];
       const offeredMap = new Map(offered.map((it) => [it.kind + '#' + it.dataId, it.count | 0]));
@@ -254,12 +262,12 @@
         const key = it.kind + '#' + it.dataId;
         const inOffer = offeredMap.get(key) || 0;
         return [
-          '<div data-row="' + key + '" style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #2c2d33">',
-          '  <span style="flex:1">' + escape(it.name) + ' <span style="color:#888;font-size:11px">(' + it.kind + '#' + it.dataId + ')</span></span>',
-          '  <span style="color:#9fd8ff;min-width:60px;text-align:right">持有:' + it.have + '</span>',
-          '  <span style="color:#ffd070;min-width:64px;text-align:right">已上桌:' + inOffer + '</span>',
-          '  <input data-amt type="number" min="0" max="' + it.have + '" value="' + inOffer + '" style="width:64px;background:#111;color:#fff;border:1px solid #333;padding:2px 4px;border-radius:3px"/>',
-          '  <button data-act="set" style="background:#3a82ff;color:#fff;border:0;border-radius:3px;padding:2px 10px;cursor:pointer">放入</button>',
+          '<div class="xsg-row" data-row="' + key + '">',
+          '  <span style="flex:1">' + escape(it.name) + ' <span class="xsg-muted" style="font-size:11px">(' + it.kind + '#' + it.dataId + ')</span></span>',
+          '  <span style="color:#2a5b8a;min-width:60px;text-align:right">持有:' + it.have + '</span>',
+          '  <span class="xsg-gold" style="min-width:64px;text-align:right">已上桌:' + inOffer + '</span>',
+          '  <input data-amt class="xsg-input" type="number" min="0" max="' + it.have + '" value="' + inOffer + '" style="width:64px"/>',
+          '  <button data-act="set" class="xsg-btn-primary" style="padding:2px 10px">放入</button>',
           '</div>',
         ].join('');
       }).join('');
@@ -319,11 +327,68 @@
     Util.log('info', 'trade ended:', reason);
   }
 
+  // ---------- 非阻塞邀请提示 ----------
+  function ensureInviteUI() {
+    if (inviteEl) return inviteEl;
+    const el = document.createElement('div');
+    el.id = 'xsg-online-trade-invite';
+    el.className = 'xsg-toast';
+    Object.assign(el.style, {
+      position: 'absolute', right: '14px', bottom: '14px',
+      minWidth: '260px', zIndex: '9300', fontSize: '13px', display: 'none',
+    });
+    el.innerHTML = [
+      '<div data-msg style="margin-bottom:8px"></div>',
+      '<div style="display:flex;gap:8px;justify-content:flex-end">',
+      '  <button data-act="accept" class="xsg-btn-primary" style="padding:4px 14px">接受</button>',
+      '  <button data-act="decline" class="xsg-btn-danger" style="padding:4px 14px">拒绝</button>',
+      '</div>',
+    ].join('');
+    ['mousedown', 'mouseup', 'click', 'pointerdown', 'pointerup', 'touchstart', 'touchend'].forEach((evt) => {
+      el.addEventListener(evt, (e) => { e.stopPropagation(); }, evt === 'touchstart' || evt === 'touchend' ? { passive: false } : undefined);
+    });
+    el.querySelector('button[data-act=accept]').addEventListener('click', () => respondInvite(true));
+    el.querySelector('button[data-act=decline]').addEventListener('click', () => respondInvite(false));
+    document.body.appendChild(el);
+    inviteEl = el;
+    return el;
+  }
+
+  function closeInvite() {
+    if (inviteTicker) { clearInterval(inviteTicker); inviteTicker = null; }
+    if (inviteEl) inviteEl.style.display = 'none';
+    pendingInviteId = null;
+  }
+
+  function respondInvite(accept) {
+    const tradeId = pendingInviteId;
+    closeInvite();
+    if (!tradeId) return;
+    Net.request('trade.respond', { tradeId, accept }).catch(handleErr);
+  }
+
+  function showInvite(e) {
+    ensureInviteUI();
+    pendingInviteId = e.tradeId;
+    const who = e.fromName || ('#' + e.fromPid);
+    const ttl = Math.max(5000, Number(e.ttlMs) || 30000);
+    inviteDeadline = Date.now() + ttl;
+    const msgEl = inviteEl.querySelector('[data-msg]');
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((inviteDeadline - Date.now()) / 1000));
+      msgEl.innerHTML = '<b>' + escape(who) + '</b> 想跟你交易 <span style="color:#b5481c;font-weight:bold">(' + left + 's)</span>';
+      if (left <= 0) respondInvite(false);
+    };
+    tick();
+    if (inviteTicker) clearInterval(inviteTicker);
+    inviteTicker = setInterval(tick, 500);
+    inviteEl.style.display = 'block';
+  }
+
   // ---------- Server events ----------
   Net.on('trade.invite.evt', (e) => {
     if (!e) return;
-    const ok = window.confirm((e.fromName || '#' + e.fromPid) + ' 想跟你交易，接受？');
-    Net.request('trade.respond', { tradeId: e.tradeId, accept: ok }).catch(handleErr);
+    showInvite(e);
   });
 
   Net.on('trade.opened.evt', (e) => {
@@ -354,6 +419,8 @@
 
   Net.on('trade.done.evt', (e) => {
     if (!e) return;
+    // 邀请阶段就被取消(对方撤回/超时): 关掉待应答的非阻塞提示
+    if (e.tradeId && pendingInviteId === e.tradeId) closeInvite();
     if (Trade.current && Trade.current.tradeId === e.tradeId) {
       const text = e.ok ? '交易成功' : ('交易结束: ' + (e.reason || ''));
       setStatus(text);

@@ -32,35 +32,52 @@
 
   let panel = null;
   let body = null;
+  let searchInput = null;
+  let resultsEl = null;
   let opened = false;
 
   function build() {
     panel = document.createElement('div');
     panel.id = 'xsg-online-friend';
+    panel.className = 'xsg-win';
     Object.assign(panel.style, {
       position: 'absolute',
       right: '10px', top: '10px',
       width: '260px', maxHeight: '60%',
-      background: 'rgba(20,20,28,0.88)', color: '#eee',
-      borderRadius: '6px', fontFamily: 'sans-serif', fontSize: '12px',
-      display: 'none', flexDirection: 'column',
-      zIndex: '9000', boxShadow: '0 4px 14px rgba(0,0,0,0.6)',
+      fontSize: '12px',
+      display: 'none',
+      zIndex: '9000',
     });
     panel.innerHTML = [
-      '<div style="padding:6px 10px;border-bottom:1px solid #333;display:flex;align-items:center;gap:6px">',
-      '  <span style="font-weight:bold;flex:1">好友 / 黑名单</span>',
-      '  <button data-act="refresh" style="background:#333;color:#fff;border:0;border-radius:3px;padding:2px 8px;cursor:pointer">刷新</button>',
-      '  <button data-act="add"     style="background:#2c9c4a;color:#fff;border:0;border-radius:3px;padding:2px 8px;cursor:pointer">加</button>',
-      '  <button data-act="close"   style="background:#444;color:#fff;border:0;border-radius:3px;padding:2px 8px;cursor:pointer">×</button>',
+      '<div class="xsg-titlebar">',
+      '  <span class="xsg-title">好友 / 黑名单</span>',
+      '  <button data-act="refresh" class="xsg-btn">刷新</button>',
+      '  <button data-act="close"   class="xsg-btn-close">×</button>',
       '</div>',
-      '<div data-body style="overflow-y:auto;padding:6px 10px;line-height:1.65"></div>',
+      '<div style="display:flex;gap:6px;padding:0 8px 6px">',
+      '  <input data-search class="xsg-input" placeholder="搜名字 或 输入pid 加好友" maxlength="16" style="flex:1" />',
+      '  <button data-act="search" class="xsg-btn-primary">搜</button>',
+      '</div>',
+      '<div data-results style="padding:0 10px"></div>',
+      '<div class="xsg-body" data-body style="min-height:120px"></div>',
     ].join('');
     document.body.appendChild(panel);
     body = panel.querySelector('[data-body]');
+    searchInput = panel.querySelector('input[data-search]');
+    resultsEl = panel.querySelector('[data-results]');
 
     panel.querySelector('button[data-act=close]').addEventListener('click', () => Friend.close());
     panel.querySelector('button[data-act=refresh]').addEventListener('click', () => Friend.refresh());
-    panel.querySelector('button[data-act=add]').addEventListener('click', () => promptAdd());
+    panel.querySelector('button[data-act=search]').addEventListener('click', () => doSearch());
+    searchInput.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); doSearch(); }
+    });
+    resultsEl.addEventListener('click', (e) => {
+      const a = e.target.closest('button[data-pid]');
+      if (!a) return;
+      addFriendByPid(Number(a.dataset.pid));
+    });
     panel.addEventListener('keydown', (e) => e.stopPropagation());
 
     body.addEventListener('click', (e) => {
@@ -91,14 +108,35 @@
     if (typeof alert === 'function') alert(msg);
   }
 
-  function promptAdd() {
-    const raw = window.prompt('输入对方 pid（数字），格式：1234 或 1234,block', '');
-    if (!raw) return;
-    const parts = raw.split(',').map(s => s.trim());
-    const pid = Number(parts[0]);
-    const kind = parts[1] === 'block' ? 'block' : 'friend';
-    if (!pid || Number.isNaN(pid)) { alert('pid 必须是数字'); return; }
-    Net.request('social.add', { pid, kind }).then(Friend.refresh).catch(showErr);
+  function addFriendByPid(pid) {
+    if (!pid || Number.isNaN(pid)) return;
+    Net.request('social.add', { pid, kind: 'friend' }).then(() => {
+      if (resultsEl) resultsEl.innerHTML = '<div class="xsg-gold" style="padding:4px 0">已发送好友请求 #' + pid + '</div>';
+      Friend.refresh();
+    }).catch(showErr);
+  }
+
+  // 搜名字(远距离/离线也能加) 或 直接输 pid 加好友
+  function doSearch() {
+    if (!searchInput) return;
+    const q = (searchInput.value || '').trim();
+    if (!q) return;
+    if (/^\d+$/.test(q)) { addFriendByPid(Number(q)); return; }
+    resultsEl.innerHTML = '<div class="xsg-muted" style="padding:4px 0">搜索中…</div>';
+    Net.request('social.search', { name: q }, 6000).then((data) => {
+      const list = (data && data.results) || [];
+      if (!list.length) {
+        resultsEl.innerHTML = '<div class="xsg-muted" style="padding:4px 0">没找到叫“' + escape(q) + '”的玩家</div>';
+        return;
+      }
+      resultsEl.innerHTML = '<div class="xsg-gold" style="padding:2px 0">搜索结果 (' + list.length + ')</div>' + list.map((e) => {
+        const dot = e.online ? '<span style="color:#2c8a2c">●</span>' : '<span style="color:#888">●</span>';
+        return '<div style="display:flex;align-items:center;justify-content:space-between;padding:1px 0">'
+          + '<span>' + dot + ' ' + escape(e.name) + ' <span class="xsg-muted">#' + e.pid + '</span></span>'
+          + '<button data-pid="' + e.pid + '" class="xsg-btn-primary" style="font-size:11px;padding:1px 8px">加好友</button>'
+          + '</div>';
+      }).join('');
+    }).catch(showErr);
   }
 
   Friend.refresh = function () {
@@ -114,22 +152,22 @@
     const fs = Friend.cache.friends || [];
     const bs = Friend.cache.blocks || [];
     const renderEntry = (e, kind) => {
-      const dot = e.online ? '<span style="color:#5dd55d">●</span>' : '<span style="color:#666">●</span>';
-      const map = e.online && e.mapId != null ? ` <span style="color:#888">@map${e.mapId}</span>` : '';
+      const dot = e.online ? '<span style="color:#2c8a2c">●</span>' : '<span style="color:#888">●</span>';
+      const map = e.online && e.mapId != null ? ` <span class="xsg-muted">@map${e.mapId}</span>` : '';
       const buttons = kind === 'friend'
-        ? `<button data-pid="${e.pid}" data-op="whisper" style="background:#3a82ff;color:#fff;border:0;border-radius:3px;padding:0 6px;font-size:11px;cursor:pointer">私聊</button>
-           <button data-pid="${e.pid}" data-op="remove-friend" style="background:#666;color:#fff;border:0;border-radius:3px;padding:0 6px;font-size:11px;cursor:pointer;margin-left:4px">删</button>`
-        : `<button data-pid="${e.pid}" data-op="unblock" style="background:#666;color:#fff;border:0;border-radius:3px;padding:0 6px;font-size:11px;cursor:pointer">解除</button>`;
-      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:1px 0">
-        <span>${dot} ${escape(e.name)} <span style="color:#888">#${e.pid}</span>${map}</span>
+        ? `<button data-pid="${e.pid}" data-op="whisper" class="xsg-btn-primary" style="font-size:11px;padding:1px 6px">私聊</button>
+           <button data-pid="${e.pid}" data-op="remove-friend" class="xsg-btn-danger" style="font-size:11px;padding:1px 6px;margin-left:4px">删</button>`
+        : `<button data-pid="${e.pid}" data-op="unblock" class="xsg-btn" style="font-size:11px;padding:1px 6px">解除</button>`;
+      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:2px 0">
+        <span>${dot} ${escape(e.name)} <span class="xsg-muted">#${e.pid}</span>${map}</span>
         <span>${buttons}</span>
       </div>`;
     };
     body.innerHTML =
-      '<div style="font-weight:bold;color:#ffd070;margin-top:2px">好友 (' + fs.length + ')</div>' +
-      (fs.length ? fs.map(e => renderEntry(e, 'friend')).join('') : '<div style="color:#888">空</div>') +
-      '<div style="font-weight:bold;color:#ff7070;margin-top:8px">黑名单 (' + bs.length + ')</div>' +
-      (bs.length ? bs.map(e => renderEntry(e, 'block')).join('') : '<div style="color:#888">空</div>');
+      '<div class="xsg-gold" style="margin-top:2px">好友 (' + fs.length + ')</div>' +
+      (fs.length ? fs.map(e => renderEntry(e, 'friend')).join('') : '<div class="xsg-muted">空</div>') +
+      '<div style="font-weight:bold;color:#b5402a;margin-top:8px">黑名单 (' + bs.length + ')</div>' +
+      (bs.length ? bs.map(e => renderEntry(e, 'block')).join('') : '<div class="xsg-muted">空</div>');
   }
 
   function escape(s) {
