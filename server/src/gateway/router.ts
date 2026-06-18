@@ -392,6 +392,13 @@ export function installRouter(io: Server): void {
       cb?.(okAck({ online: listOnline().length, ...stats() }));
     });
 
+    // 服务端权威时间下发: 客户端用它做统一时钟 + 防改本地钟作弊。
+    // 轻量、无需鉴权; 客户端做半-RTT 校正算出 serverNow()。
+    socket.on('time.sync', (_raw, ack) => {
+      const cb = safeAck(ack);
+      cb?.(okAck({ t: Date.now() }));
+    });
+
     // 在线玩家列表(联机中心 Hub 的"在线玩家"格用): 直接私聊/加好友/邀交易, 不必跑到对方身边
     socket.on('player.listOnline', (_raw, ack) => {
       const cb = safeAck(ack);

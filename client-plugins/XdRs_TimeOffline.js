@@ -33,10 +33,27 @@
  * @param foregroundDeltaMs
  * @text 区分前台 / 离线的单次 delta 阈值(毫秒)
  * @desc 单次 update() 的 wall-delta 中, 前 N 毫秒按前台速率, 之后按离线压缩速率。
- *       默认 100 ms (覆盖 60fps 正常 16.6ms + 卡顿余量)。除非了解原理, 不建议改。
+ *       默认 100 ms (覆盖 60fps 正常 16.6ms + 卡顿余量)。仅 legacy 模式用。
  * @type number
  * @min 50
  * @default 100
+ *
+ * @param growthMode
+ * @text 植物成长模型
+ * @desc server=纯服务端真实时间成熟(前台/离线同速, 无压缩无上限, 防改钟);
+ *       legacy=旧版前台原速+离线压缩双速率。
+ * @type select
+ * @option server
+ * @option legacy
+ * @default server
+ *
+ * @param serverLifeSec
+ * @text server模式: 每级真实秒数
+ * @desc server 模式下植物每长 1 级所需的真实秒数。默认 864 →
+ *       100 级植物 86400s=1 天成熟, 其它植物按各自 maxLife 等比例。
+ * @type number
+ * @min 1
+ * @default 864
  *
  * @param gatherRefreshIntervalSec
  * @text 采集点刷新间隔(秒)
@@ -164,6 +181,11 @@
     botanyEnabled: params.botanyEnabled !== 'false',
     gatherEnabled: params.gatherEnabled !== 'false',
     logLevel: String(params.logLevel || 'info').toLowerCase(),
+    // 成长模型: 'server' = 纯服务端真实时间成熟(前台/离线同速, 无压缩无上限);
+    //           'legacy' = 旧版前台原速 + 离线压缩双速率。默认 server。
+    growthMode: String(params.growthMode || 'server').toLowerCase(),
+    // server 模式下每 1 级所需真实秒数。默认 864 → 100 级植物 = 86400s = 1 天, 其它等比例。
+    serverLifeSec: Math.max(1, Number(params.serverLifeSec || 864)),
   };
 
   // 简易日志
@@ -175,6 +197,13 @@
     fn(prefix, ...args);
   };
 
+  // 服务端权威时间: 防玩家改本地钟加速植物/采集刷新。
+  // 未连服务端 / 未同步时回退本地 Date.now(), 保证单机可玩 (回滚点)。
+  const SN = () => {
+    const T = window.XdRsOnline && window.XdRsOnline.Time;
+    return (T && typeof T.serverNow === 'function') ? T.serverNow() : Date.now();
+  };
+
   // 前台速率: 1 life = 60s wall-clock (与 RMMZ 原版 3600 帧 / 60fps 完全一致).
   // 离线压缩: 把 maxOfflineGrowMs 这段时间最多压缩到 offlineMaxLife 个 life.
   //          maxOffline=28800s, offlineMaxLife=100 → 离线每 288s 长 1 life.
@@ -184,6 +213,8 @@
   //   剩下算离线 (按比例换成毫秒后再加进 _lifeCountMs).
   const ONE_STAGE_MS = CFG.botanyLifeMs;
   const OFFLINE_RATIO = CFG.maxOfflineGrowMs / (CFG.offlineMaxLife * ONE_STAGE_MS);
+  // server 模式: 1 级 = serverLifeSec 秒真实时间(前台/离线统一), 100 级植物 = 100×serverLifeSec。
+  const SERVER_LIFE_MS = CFG.serverLifeSec * 1000;
   // OFFLINE_RATIO 默认 = 28800000 / (100 * 60000) = 4.8
   // 即"1ms 真实离线时间" 在内部记账成 "1/4.8 ms 前台时间", 这样 wall 8h 离线
   // → 内部累积 28800000/4.8 = 6_000_000ms = 100 life × 60_000ms, 正好 100 阶段.
@@ -198,7 +229,7 @@
       const _setup = Game_Botany.prototype.setup;
       Game_Botany.prototype.setup = function () {
         _setup.call(this);
-        this._lastUpdateTs = Date.now();
+        this._lastUpdateTs = SN();
         this._lifeCountMs = 0;
       };
 
@@ -218,40 +249,53 @@
       Game_Botany.prototype.update = function () {
         // 已成熟, 不再生长, 但仍要刷新时间戳避免下次 update 算出巨大 delta
         if (this._life >= this._maxLife) {
-          this._lastUpdateTs = Date.now();
+          this._lastUpdateTs = SN();
           return;
         }
 
-        const now = Date.now();
+        const now = SN();
         // 老存档兼容: 字段缺失时初始化为 now, 本帧 delta = 0
         const lastTs = (typeof this._lastUpdateTs === 'number') ? this._lastUpdateTs : now;
-        // 上限 + 倒拨保护
-        const rawDelta = now - lastTs;
-        const delta = Math.max(0, Math.min(rawDelta, CFG.maxOfflineGrowMs));
         this._lastUpdateTs = now;
-
-        // 拆成 前台 + 离线 两段, 按各自速率换成内部毫秒
-        const fgMs = Math.min(delta, CFG.foregroundDeltaMs);
-        const bgMs = delta - fgMs;
-        const internalMs = fgMs + bgMs / OFFLINE_RATIO;
-
         if (typeof this._lifeCountMs !== 'number') this._lifeCountMs = 0;
-        this._lifeCountMs += internalMs;
+
+        let stageMs, addMs;
+        if (CFG.growthMode === 'server') {
+          // 纯服务端真实时间成熟: 前台/离线同速, 无 8h 上限。
+          // 倒拨取 0; 不封顶(超长离线自然在 maxLife 处停)。serverNow 已防改本地钟。
+          stageMs = SERVER_LIFE_MS;
+          addMs = Math.max(0, now - lastTs);
+        } else {
+          // legacy 双速率: 前台原速 + 离线压缩
+          stageMs = ONE_STAGE_MS;
+          const delta = Math.max(0, Math.min(now - lastTs, CFG.maxOfflineGrowMs));
+          const fgMs = Math.min(delta, CFG.foregroundDeltaMs);
+          addMs = fgMs + (delta - fgMs) / OFFLINE_RATIO;
+        }
+
+        this._lifeCountMs += addMs;
 
         // 多阶段消费
-        while (this._lifeCountMs >= ONE_STAGE_MS && this._life < this._maxLife) {
-          this._lifeCountMs -= ONE_STAGE_MS;
+        while (this._lifeCountMs >= stageMs && this._life < this._maxLife) {
+          this._lifeCountMs -= stageMs;
           this.addLife();
         }
         // 已经成熟时把 lifeCountMs 清零, 避免数值爆炸
         if (this._life >= this._maxLife) this._lifeCountMs = 0;
       };
 
-      LOG('info',
-        'botany dual-rate enabled: foreground 1life=' + (ONE_STAGE_MS / 1000) + 's, ' +
-        'offline ' + (CFG.maxOfflineGrowMs / 1000) + 's→' + CFG.offlineMaxLife + ' life ' +
-        '(ratio=' + OFFLINE_RATIO.toFixed(3) + ')'
-      );
+      if (CFG.growthMode === 'server') {
+        LOG('info',
+          'botany server-time mode: 1life=' + CFG.serverLifeSec + 's real, ' +
+          '100-life plant=' + (CFG.serverLifeSec * 100 / 3600).toFixed(1) + 'h (others proportional), no offline cap'
+        );
+      } else {
+        LOG('info',
+          'botany legacy dual-rate: foreground 1life=' + (ONE_STAGE_MS / 1000) + 's, ' +
+          'offline ' + (CFG.maxOfflineGrowMs / 1000) + 's→' + CFG.offlineMaxLife + ' life ' +
+          '(ratio=' + OFFLINE_RATIO.toFixed(3) + ')'
+        );
+      }
     }
   }
 
@@ -276,7 +320,7 @@
         return false;
       }
 
-      const now = Date.now();
+      const now = SN();
       const last = $gameSystem._lastGatherRefreshTs;
 
       // 老存档第一次 / 全新角色: 仅初始化时间戳, 不立刻刷
@@ -354,7 +398,7 @@
     },
     botanyStatus() {
       if (!$gameSystem || !$gameSystem._botanys) return [];
-      const now = Date.now();
+      const now = SN();
       return $gameSystem._botanys.filter(b => b).map(b => ({
         id: b.id(),
         mapId: b.mapId(),
@@ -367,7 +411,7 @@
     },
     gatherStatus() {
       if (!$gameSystem) return null;
-      const now = Date.now();
+      const now = SN();
       const last = $gameSystem._lastGatherRefreshTs;
       if (typeof last !== 'number') return { lastRefreshTs: null, idleSec: null, intervalSec: CFG.gatherRefreshIntervalMs / 1000 };
       return {
