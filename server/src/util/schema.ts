@@ -171,6 +171,32 @@ export const DungeonEnter = z.object({
   partyIds: z.array(z.number().int().positive()).max(8).optional(),
 });
 
+// --------- 寄售行（Consignment House） ---------
+export const MarketCreate = z.object({
+  kind: ItemKind,
+  dataId: z.number().int().positive(),
+  count: z.number().int().min(1).max(9999),
+  unitPrice: z.number().int().min(1).max(999_999_999),
+});
+
+export const MarketBuy = z.object({
+  listingId: z.number().int().positive(),
+  qty: z.number().int().min(1).max(9999),
+});
+
+export const MarketIdOnly = z.object({ listingId: z.number().int().positive() });
+
+export const MarketBrowse = z.object({
+  kind: ItemKind.optional(),
+  q: z.string().max(16).optional(),
+  offset: z.number().int().nonnegative().optional(),
+  limit: z.number().int().min(1).max(50).optional(),
+});
+
+export const MarketAck = z.object({
+  ids: z.array(z.number().int().positive()).max(200),
+});
+
 export type AuthLoginInput = z.infer<typeof AuthLogin>;
 export type AuthRegisterInput = z.infer<typeof AuthRegister>;
 export type AuthResumeInput = z.infer<typeof AuthResume>;
@@ -190,3 +216,7 @@ export type SaveUploadInput = z.infer<typeof SaveUpload>;
 export type TradeOfferInput = z.infer<typeof TradeOffer>;
 export type PetActInput = z.infer<typeof PetAct>;
 export type DungeonEnterInput = z.infer<typeof DungeonEnter>;
+export type MarketCreateInput = z.infer<typeof MarketCreate>;
+export type MarketBuyInput = z.infer<typeof MarketBuy>;
+export type MarketBrowseInput = z.infer<typeof MarketBrowse>;
+export type MarketAckInput = z.infer<typeof MarketAck>;

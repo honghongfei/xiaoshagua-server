@@ -107,7 +107,22 @@ import {
   onPlayerDisconnect as dungeonOnDisconnect,
 } from '../domain/dungeon/dungeonService.js';
 import {
+  ackNotifications as marketAckNotifications,
+  browse as marketBrowse,
+  buyListing as marketBuy,
+  cancelListing as marketCancel,
+  createListing as marketCreate,
+  getMine as marketGetMine,
+  listNotifications as marketListNotifications,
+  unlockSlot as marketUnlockSlot,
+} from '../domain/market/marketService.js';
+import {
   DungeonEnter,
+  MarketAck,
+  MarketBrowse,
+  MarketBuy,
+  MarketCreate,
+  MarketIdOnly,
   PetAct,
   PetCreate,
   TradeIdOnly,
@@ -303,6 +318,8 @@ export function installRouter(io: Server): void {
           broadcastSystem(`${player.name} 上线了`);
         }
         cb?.(okAck(snapshot));
+        // 进图后补发离线期间攒下的寄售通知（卖出回执等）。
+        flushMarketNotifications(io, session.pid);
       } catch (err) {
         sendError(socket, cb, err);
       }
@@ -704,7 +721,100 @@ export function installRouter(io: Server): void {
         cb?.(okAck({ ok: true }));
       } catch (err) { sendError(socket, cb, err); }
     });
+
+    // --------- 寄售行（Consignment House） ---------
+    socket.on('market.browse', (raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const s = requireAuth(socket);
+        const input = parse(MarketBrowse, raw);
+        cb?.(okAck(marketBrowse({ viewerPid: s.pid, kind: input.kind, q: input.q, offset: input.offset, limit: input.limit })));
+      } catch (err) { sendError(socket, cb, err); }
+    });
+
+    socket.on('market.mine', (_raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const s = requireAuth(socket);
+        cb?.(okAck(marketGetMine(s.pid)));
+      } catch (err) { sendError(socket, cb, err); }
+    });
+
+    socket.on('market.create', (raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const s = requireAuth(socket);
+        const input = parse(MarketCreate, raw);
+        cb?.(okAck(marketCreate(s.pid, input.kind, input.dataId, input.count, input.unitPrice)));
+      } catch (err) { sendError(socket, cb, err); }
+    });
+
+    socket.on('market.cancel', (raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const s = requireAuth(socket);
+        const input = parse(MarketIdOnly, raw);
+        cb?.(okAck(marketCancel(s.pid, input.listingId)));
+      } catch (err) { sendError(socket, cb, err); }
+    });
+
+    socket.on('market.buy', (raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const s = requireAuth(socket);
+        const input = parse(MarketBuy, raw);
+        const res = marketBuy(s.pid, input.listingId, input.qty);
+        cb?.(okAck(res));
+        // 成交后投递通知：卖家（在线即时 / 离线留邮箱）+ 买家自己的成交回执。
+        flushMarketNotifications(io, res.sellerId);
+        flushMarketNotifications(io, s.pid);
+      } catch (err) { sendError(socket, cb, err); }
+    });
+
+    socket.on('market.unlockSlot', (_raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const s = requireAuth(socket);
+        cb?.(okAck(marketUnlockSlot(s.pid)));
+      } catch (err) { sendError(socket, cb, err); }
+    });
+
+    socket.on('market.notifications', (_raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const s = requireAuth(socket);
+        cb?.(okAck(marketListNotifications(s.pid)));
+      } catch (err) { sendError(socket, cb, err); }
+    });
+
+    socket.on('market.ack', (raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const s = requireAuth(socket);
+        const input = parse(MarketAck, raw);
+        cb?.(okAck(marketAckNotifications(s.pid, input.ids)));
+      } catch (err) { sendError(socket, cb, err); }
+    });
   });
+}
+
+// 推送某玩家的未读寄售通知（仅在线时）。用于成交后即时推 + 进图补发离线队列。
+// 离线则不动，留在 notification 表，待其下次 enterMap 再补发。
+function flushMarketNotifications(io: Server, pid: number): void {
+  const online = getOnlineByPid(pid);
+  if (!online) return;
+  const { items } = marketListNotifications(pid);
+  if (items.length === 0) return;
+  io.to(online.socketId).emit('market.notify.evt', { items });
+  marketAckNotifications(pid, items.map((i) => i.id));
 }
 
 function requireAuth(socket: GameSocket): { pid: number; accountId: number } {

@@ -35,6 +35,16 @@ export const config = {
   maxGoldDeltaPerCall: num(process.env.MAX_GOLD_DELTA_PER_CALL, 10_000_000),
   maxItemDeltaPerCall: num(process.env.MAX_ITEM_DELTA_PER_CALL, 1_000),
 
+  // 寄售行（Consignment House）
+  marketFeeBps: num(process.env.MARKET_FEE_BPS, 2000), // 手续费 20% = 2000/10000，销毁
+  marketDefaultSlots: num(process.env.MARKET_DEFAULT_SLOTS, 2),
+  marketMaxSlots: num(process.env.MARKET_MAX_SLOTS, 10),
+  // 第 3..10 格解锁价（index 0 = 第3格）；扣的金币销毁。顺序解锁。
+  marketSlotPrices: [10_000, 50_000, 300_000, 1_500_000, 6_000_000, 20_000_000, 50_000_000, 100_000_000],
+  marketMaxUnitPrice: num(process.env.MARKET_MAX_UNIT_PRICE, 999_999_999), // 对齐资产 GOLD_CAP
+  marketMaxStack: num(process.env.MARKET_MAX_STACK, 9_999), // 对齐 ITEM_CAP
+  marketBrowsePageMax: num(process.env.MARKET_BROWSE_PAGE_MAX, 50),
+
   logLevel: str(process.env.LOG_LEVEL, 'info'),
 } as const;
 
