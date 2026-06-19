@@ -118,7 +118,7 @@ export function startServer(): Promise<ServerHandle> {
     const io = new Server(httpServer, {
       cors: { origin: corsOrigin === '*' ? '*' : corsOrigin.split(','), credentials: corsOrigin !== '*' },
       pingInterval: 20_000,
-      pingTimeout: 25_000,
+      pingTimeout: 60_000,
       maxHttpBufferSize: 4 * 1024 * 1024,
     });
 
