@@ -49,11 +49,11 @@
  *
  * @param serverLifeSec
  * @text server模式: 每级真实秒数
- * @desc server 模式下植物每长 1 级所需的真实秒数。默认 864 →
- *       100 级植物 86400s=1 天成熟, 其它植物按各自 maxLife 等比例。
+ * @desc server 模式下植物每长 1 级所需的真实秒数。默认 432 →
+ *       100 级植物 43200s=12 小时成熟, 其它植物按各自 maxLife 等比例。
  * @type number
  * @min 1
- * @default 864
+ * @default 432
  *
  * @param gatherRefreshIntervalSec
  * @text 采集点刷新间隔(秒)
@@ -184,8 +184,8 @@
     // 成长模型: 'server' = 纯服务端真实时间成熟(前台/离线同速, 无压缩无上限);
     //           'legacy' = 旧版前台原速 + 离线压缩双速率。默认 server。
     growthMode: String(params.growthMode || 'server').toLowerCase(),
-    // server 模式下每 1 级所需真实秒数。默认 864 → 100 级植物 = 86400s = 1 天, 其它等比例。
-    serverLifeSec: Math.max(1, Number(params.serverLifeSec || 864)),
+    // server 模式下每 1 级所需真实秒数。默认 432 → 100 级植物 = 43200s = 12 小时, 其它等比例。
+    serverLifeSec: Math.max(1, Number(params.serverLifeSec || 432)),
   };
 
   // 简易日志
