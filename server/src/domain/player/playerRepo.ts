@@ -173,6 +173,11 @@ export function deleteAuthToken(token: string): void {
   db.prepare('DELETE FROM auth_token WHERE token = ?').run(token);
 }
 
+export function updateAuthTokenExpiry(token: string, expiresAt: number): void {
+  const db = openDb();
+  db.prepare('UPDATE auth_token SET expires_at = ? WHERE token = ?').run(expiresAt, token);
+}
+
 export function pruneExpiredTokens(): number {
   const db = openDb();
   const info = db.prepare('DELETE FROM auth_token WHERE expires_at < ?').run(Date.now());

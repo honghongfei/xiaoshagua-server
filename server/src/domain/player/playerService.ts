@@ -125,11 +125,13 @@ export function resume(token: string): { session: AuthSession; character: Charac
   }
   const chr = repo.findCharacterById(row.character_id);
   if (!chr) throw new AppError('CHAR_GONE', 'character no longer exists');
+  const expiresAt = Date.now() + config.tokenTtlSec * 1000;
+  repo.updateAuthTokenExpiry(row.token, expiresAt);
   const session: AuthSession = {
     token: row.token,
     accountId: row.account_id,
     characterId: row.character_id,
-    expiresAt: row.expires_at,
+    expiresAt,
   };
   return { session, character: toPublic(chr) };
 }

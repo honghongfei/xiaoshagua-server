@@ -200,6 +200,7 @@
         if (window.XdRsOnline.Gather) window.XdRsOnline.Gather.onEnterSnapshot(snap);
         if (snap && snap.others) snap.others.forEach(addOther);
         lastSent = { x, y, d };
+        startReconcileLoops();
       })
       .catch((err) => {
         Util.log('warn', 'enterMap failed:', err && err.message);
