@@ -108,6 +108,7 @@
     { key: 'chat', label: '聊天', run: () => openChat() },
     { key: 'save', label: '存档迁移', run: () => openModule(() => G.SaveMigrate && G.SaveMigrate.open && G.SaveMigrate.open()) },
     { key: 'rename', label: '改名', run: () => doRename() },
+    { key: 'update', label: '检查更新', run: () => openModule(() => G.Update && G.Update.openPanel && G.Update.openPanel()) },
     { key: 'logout', label: '退出联机', run: () => doLogout() },
     { key: 'help', label: '帮助', run: () => showHelp() },
   ];
@@ -307,11 +308,19 @@
     closeOnlinePanel();
     hideFab();
   }
+  function inMapScene() {
+    return typeof Scene_Map !== 'undefined' && SceneManager._scene instanceof Scene_Map;
+  }
+  function refreshVisibility() {
+    if (inMapScene() && Core.isOnline()) showFab();
+    else hideAll();
+  }
+  Hub.refreshVisibility = refreshVisibility;
 
   const _Scene_Map_start = Scene_Map.prototype.start;
   Scene_Map.prototype.start = function () {
     _Scene_Map_start.call(this);
-    if (Core.isOnline()) showFab();
+    refreshVisibility();
   };
   const _Scene_Map_terminate = Scene_Map.prototype.terminate;
   Scene_Map.prototype.terminate = function () {
@@ -319,6 +328,11 @@
     _Scene_Map_terminate.call(this);
   };
   Net.on('__disconnect__', hideAll);
+  Net.on('__connect__', () => {
+    setTimeout(refreshVisibility, 500);
+    setTimeout(refreshVisibility, 2500);
+  });
+  setInterval(refreshVisibility, 1000);
 
   // ESC 关闭当前浮层
   document.addEventListener('keydown', (e) => {
