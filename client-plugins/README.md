@@ -100,4 +100,5 @@ https://cdn.socket.io/4.8.0/socket.io.min.js
 | `XdRs_Online_Trade.js` | M4 | 两段提交交易 DOM 窗 |
 | `XdRs_Online_Pet.js` | M4 | 云宠物面板（与原 XdRs_Arder 并行） |
 | `XdRs_Online_Dungeon.js` | M5 | regionId 触发副本进入/离开 |
+| `XdRs_Online_Home.js` | 家园 | 私人实例化家园 + 家具 DIY 摆放 + 升级换底图(椰树大厦→空中花园) + 访客同步；依赖 PlayerSync，须放 Hub 之前，并在 plugins.js 注册 |
 | `XdRs_Online_MultiInstance.js` | 多开 | 多开实例隔离本地存档目录（须放 plugins.js 最前，配合 多开启动器.bat） |
