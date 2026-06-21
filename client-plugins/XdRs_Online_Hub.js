@@ -105,6 +105,7 @@
     { key: 'friend', label: '好友', run: () => openModule(() => G.Friend && G.Friend.open && G.Friend.open()) },
     { key: 'players', label: '在线玩家', run: () => openOnlinePanel() },
     { key: 'market', label: '寄售行', run: () => openModule(() => G.Market && G.Market.open && G.Market.open()) },
+    { key: 'home', label: '我的家园', run: () => { closePopover(); if (G.Home && G.Home.enterHome) { G.Home.enterHome(); setTimeout(() => { if (G.Home.open) G.Home.open(); }, 600); } else { flash('家园插件未就绪'); } } },
     { key: 'chat', label: '聊天', run: () => openChat() },
     { key: 'save', label: '存档迁移', run: () => openModule(() => G.SaveMigrate && G.SaveMigrate.open && G.SaveMigrate.open()) },
     { key: 'rename', label: '改名', run: () => doRename() },
@@ -168,6 +169,7 @@
     if (G.Chat && typeof G.Chat.close === 'function') { try { G.Chat.close(); } catch (e) { /* ignore */ } }
     if (G.SaveMigrate && typeof G.SaveMigrate.close === 'function') { try { G.SaveMigrate.close(); } catch (e) { /* ignore */ } }
     if (G.Market && typeof G.Market.close === 'function') { try { G.Market.close(); } catch (e) { /* ignore */ } }
+    if (G.Home && typeof G.Home.close === 'function') { try { G.Home.close(); } catch (e) { /* ignore */ } }
     closeOnlinePanel();
   }
   function openModule(opener) {
@@ -251,6 +253,9 @@
       } else if (op === 'trade') {
         if (G.Trade && typeof G.Trade.inviteTo === 'function') { closeOnlinePanel(); G.Trade.inviteTo(pid); }
         else flash('交易插件未就绪');
+      } else if (op === 'home') {
+        if (G.Home && typeof G.Home.enterHome === 'function') { closeOnlinePanel(); closePopover(); G.Home.enterHome(pid); }
+        else flash('家园插件未就绪');
       }
     });
   }
@@ -290,6 +295,7 @@
         + '<button class="xsg-btn-primary" data-pid="' + p.pid + '" data-nm="' + nm + '" data-op="whisper" style="font-size:11px;padding:1px 8px">私聊</button>'
         + '<button class="xsg-btn" data-pid="' + p.pid + '" data-op="friend" style="font-size:11px;padding:1px 8px">加好友</button>'
         + '<button class="xsg-btn-warn" data-pid="' + p.pid + '" data-op="trade" style="font-size:11px;padding:1px 8px">邀交易</button>'
+        + '<button class="xsg-btn" data-pid="' + p.pid + '" data-op="home" style="font-size:11px;padding:1px 8px">去TA家</button>'
         + '</span></div>';
     }).join('');
   }
