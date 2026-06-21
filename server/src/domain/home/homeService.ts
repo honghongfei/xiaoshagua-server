@@ -3,6 +3,7 @@ import { config } from '../../config.js';
 import { log } from '../../log.js';
 import { AppError } from '../../util/errors.js';
 import * as invRepo from '../inventory/inventoryRepo.js';
+import { findCharacterById } from '../player/playerRepo.js';
 import { isFriend, isBlocked } from '../social/socialService.js';
 import { resolveBaseMap, spawnFor, stylesForTier } from './homeMaps.js';
 import * as repo from './homeRepo.js';
@@ -56,18 +57,22 @@ function furnitureView(rows: repo.FurnitureRow[]): HomeFurnitureView[] {
   }));
 }
 
+// 访客可见性校验：home 缺行按 private 处理（访客拒；房主进自家有 ensureHome 兜底）。
+function assertCanView(home: repo.HomeRow | undefined, selfPid: number, ownerPid: number): void {
+  if (ownerPid === selfPid) return;
+  if (isBlocked(ownerPid, selfPid)) throw new AppError('BLOCKED', 'you are blocked by the owner');
+  const visibility = home?.visibility ?? 'private';
+  if (visibility === 'private') throw new AppError('FORBIDDEN', 'home is private');
+  if (visibility === 'friends' && !isFriend(ownerPid, selfPid)) throw new AppError('NOT_FRIEND', 'friends only');
+}
+
 export function enter(selfPid: number, ownerPid?: number): HomeEnterResult {
   const target = ownerPid ?? selfPid;
-  repo.ensureHome(target, Date.now());
+  if (!findCharacterById(target)) throw new AppError('NOT_FOUND', 'character not found');
+  if (target === selfPid) repo.ensureHome(target, Date.now());
   const home = repo.getHome(target);
+  assertCanView(home, selfPid, target);
   if (!home) throw new AppError('INTERNAL', 'home row missing', 500);
-  if (target !== selfPid) {
-    if (isBlocked(target, selfPid)) throw new AppError('BLOCKED', 'you are blocked by the owner');
-    if (home.visibility === 'private') throw new AppError('FORBIDDEN', 'home is private');
-    if (home.visibility === 'friends' && !isFriend(target, selfPid)) {
-      throw new AppError('NOT_FRIEND', 'friends only');
-    }
-  }
   return {
     ownerPid: target,
     virtualMapId: homeVirtualMapId(target),
@@ -81,6 +86,14 @@ export function enter(selfPid: number, ownerPid?: number): HomeEnterResult {
     furniture: furnitureView(repo.listFurniture(target)),
     spawn: spawnFor(home.building),
   };
+}
+
+// 只读快照：不 ensureHome（避免访客刷出空行），用于访客补拉布局兜底。
+export function furnitureSnapshot(selfPid: number, ownerPid: number): { furniture: HomeFurnitureView[] } {
+  if (!findCharacterById(ownerPid)) throw new AppError('NOT_FOUND', 'character not found');
+  const home = repo.getHome(ownerPid);
+  assertCanView(home, selfPid, ownerPid);
+  return { furniture: furnitureView(repo.listFurniture(ownerPid)) };
 }
 
 export function setVisibility(

@@ -198,3 +198,26 @@ describe('homeService.upgrade', () => {
     expectCode(() => home.upgrade(pid), 'NOT_ENOUGH_GOLD');
   });
 });
+
+describe('homeService hardening (N1/N2)', () => {
+  it('enter rejects NOT_FOUND for a non-existent owner', () => {
+    const me = mkChar();
+    expectCode(() => home.enter(me, 999_999), 'NOT_FOUND');
+  });
+
+  it('furnitureSnapshot respects visibility (private FORBIDDEN, public visible)', () => {
+    const fid = 5101;
+    seedFurniture(fid);
+    const owner = mkChar({ items: [{ kind: 'item', dataId: fid, count: 1 }] });
+    const visitor = mkChar();
+    home.placeFurniture(owner, fid, 2, 2, 2, 1); // ensures owner home (default private)
+    expectCode(() => home.furnitureSnapshot(visitor, owner), 'FORBIDDEN');
+    home.setVisibility(owner, 'public');
+    expect(home.furnitureSnapshot(visitor, owner).furniture.length).toBe(1);
+  });
+
+  it('furnitureSnapshot rejects NOT_FOUND for a non-existent owner', () => {
+    const me = mkChar();
+    expectCode(() => home.furnitureSnapshot(me, 999_999), 'NOT_FOUND');
+  });
+});

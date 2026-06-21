@@ -149,6 +149,7 @@ import {
   placeFurniture as homePlaceFurniture,
   moveFurniture as homeMoveFurniture,
   removeFurniture as homeRemoveFurniture,
+  furnitureSnapshot as homeFurnitureSnapshot,
 } from '../domain/home/homeService.js';
 import {
   HomeEnter,
@@ -938,10 +939,10 @@ export function installRouter(io: Server): void {
     socket.on('home.furniture.snapshot', (raw, ack) => {
       const cb = safeAck(ack);
       try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
         const s = requireAuth(socket);
         const input = parse(HomePidOnly, raw);
-        const r = homeEnter(s.pid, input.ownerPid);
-        cb?.(okAck({ furniture: r.furniture }));
+        cb?.(okAck(homeFurnitureSnapshot(s.pid, input.ownerPid)));
       } catch (err) { sendError(socket, cb, err); }
     });
   });
