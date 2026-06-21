@@ -7,8 +7,6 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { openDb } from '../src/db/sqlite.js';
-import { runMigrations } from '../src/db/migrate.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.argv[2] || join(here, '../../../xiaoshagua/data');
@@ -85,20 +83,10 @@ function main(): void {
   const furniture = extractFurniture();
   writeFileSync(OUT_FURN, JSON.stringify(furniture, null, 2), 'utf8');
 
-  // 种入 home_furniture_catalog（loadCatalog 运行期读表）。
-  runMigrations();
-  const db = openDb();
-  const stmt = db.prepare(
-    'INSERT OR REPLACE INTO home_furniture_catalog (furniture_id, layer, w, h) VALUES (?, ?, ?, ?)',
-  );
-  const seed = db.transaction((rows: CatalogEntry[]) => {
-    for (const r of rows) stmt.run(r.furniture_id, r.layer, r.w, r.h);
-  });
-  seed(furniture);
-
   const tiers = Object.keys(table).length;
   console.log(`home maps: ${count} variants across ${tiers} tiers -> ${OUT_MAP}`);
-  console.log(`home furniture: ${furniture.length} items -> ${OUT_FURN} + seeded home_furniture_catalog`);
+  console.log(`home furniture: ${furniture.length} items -> ${OUT_FURN}`);
+  console.log('提示：把这两个 JSON 用 git add -f 强制提交，随部署上服务器（loadCatalog/homeMaps 运行期读它们）。');
 }
 
 main();

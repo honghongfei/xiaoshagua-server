@@ -71,12 +71,10 @@ function itemCount(pid: number, dataId: number): number {
   const row = invRepo.listInventory(pid).find((r) => r.kind === 'item' && r.data_id === dataId);
   return row ? row.count : 0;
 }
+const _seededFurniture = new Set<number>();
 function seedFurniture(fid: number): void {
-  sqlite
-    .openDb()
-    .prepare('INSERT OR REPLACE INTO home_furniture_catalog (furniture_id, layer, w, h) VALUES (?, 1, 1, 1)')
-    .run(fid);
-  homeRepo.loadCatalog();
+  _seededFurniture.add(fid);
+  homeRepo.setCatalogForTest(Array.from(_seededFurniture));
 }
 function setSlots(pid: number, n: number): void {
   home.enter(pid); // ensure home row exists

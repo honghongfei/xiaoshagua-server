@@ -1,3 +1,6 @@
+import { readFileSync, existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { openDb, withTx, type DB } from '../../db/sqlite.js';
 
 export interface HomeRow {
@@ -134,14 +137,27 @@ export function deleteFurniture(db: DB, id: number, ownerId: number): number {
   return db.prepare('DELETE FROM home_furniture WHERE id = ? AND owner_id = ?').run(id, ownerId).changes;
 }
 
-// 家具白名单：启动时 loadCatalog() 从表载入内存 Set。
+// 家具白名单：启动时 loadCatalog() 从 home-furniture-catalog.json 载入内存 Set
+// （与 gather-spawn-table.json 同惯例：生成文件强制提交进 git，随部署上服务器，无需在服务器跑 extract）。
 let catalog: Set<number> = new Set();
+const CATALOG_PATH = join(dirname(fileURLToPath(import.meta.url)), '../../../data/home-furniture-catalog.json');
 
 export function loadCatalog(): void {
-  const rows = openDb()
-    .prepare<[], { furniture_id: number }>('SELECT furniture_id FROM home_furniture_catalog')
-    .all();
-  catalog = new Set(rows.map((r) => r.furniture_id));
+  try {
+    if (existsSync(CATALOG_PATH)) {
+      const arr = JSON.parse(readFileSync(CATALOG_PATH, 'utf8')) as { furniture_id: number }[];
+      catalog = new Set(arr.map((r) => r.furniture_id));
+      return;
+    }
+  } catch {
+    /* 缺文件 / 解析失败 → 空白名单（摆放一律 NOT_FURNITURE，安全降级） */
+  }
+  catalog = new Set();
+}
+
+// 测试用：直接注入白名单（不依赖文件/DB）。
+export function setCatalogForTest(ids: number[]): void {
+  catalog = new Set(ids);
 }
 
 export function isFurniture(furnitureId: number): boolean {
