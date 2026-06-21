@@ -140,6 +140,25 @@ import {
 } from '../util/schema.js';
 import { attachSession, takeToken } from './middleware.js';
 import { assertClientVersion } from '../domain/update/versionGate.js';
+import {
+  attachHomeIo,
+  enter as homeEnter,
+  setVisibility as homeSetVisibility,
+  setStyle as homeSetStyle,
+  upgrade as homeUpgrade,
+  placeFurniture as homePlaceFurniture,
+  moveFurniture as homeMoveFurniture,
+  removeFurniture as homeRemoveFurniture,
+} from '../domain/home/homeService.js';
+import {
+  HomeEnter,
+  HomePidOnly,
+  HomeVisibility,
+  HomeStyle,
+  HomeFurniturePlace,
+  HomeFurnitureMove,
+  HomeIdOnly,
+} from '../util/schema.js';
 import { failAck, okAck, type AckResponse, type GameSocket } from './types.js';
 
 type AckFn = (resp: AckResponse<unknown>) => void;
@@ -195,6 +214,7 @@ export function installRouter(io: Server): void {
   attachStateIo(io);
   attachTradeIo(io);
   attachDungeonIo(io);
+  attachHomeIo(io);
   startTick();
 
   io.on('connection', (raw) => {
@@ -842,6 +862,86 @@ export function installRouter(io: Server): void {
         const s = requireAuth(socket);
         const input = parse(MarketAck, raw);
         cb?.(okAck(marketAckNotifications(s.pid, input.ids)));
+      } catch (err) { sendError(socket, cb, err); }
+    });
+
+    // --------- 家园（Home） ---------
+    socket.on('home.enter', (raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const s = requireAuth(socket);
+        const input = parse(HomeEnter, raw);
+        cb?.(okAck(homeEnter(s.pid, input.ownerPid)));
+      } catch (err) { sendError(socket, cb, err); }
+    });
+
+    socket.on('home.setVisibility', (raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const s = requireAuth(socket);
+        const input = parse(HomeVisibility, raw);
+        cb?.(okAck(homeSetVisibility(s.pid, input.visibility)));
+      } catch (err) { sendError(socket, cb, err); }
+    });
+
+    socket.on('home.setStyle', (raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const s = requireAuth(socket);
+        const input = parse(HomeStyle, raw);
+        cb?.(okAck(homeSetStyle(s.pid, input.style)));
+      } catch (err) { sendError(socket, cb, err); }
+    });
+
+    socket.on('home.upgrade', (_raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const s = requireAuth(socket);
+        cb?.(okAck(homeUpgrade(s.pid)));
+      } catch (err) { sendError(socket, cb, err); }
+    });
+
+    socket.on('home.furniture.place', (raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const s = requireAuth(socket);
+        const i = parse(HomeFurniturePlace, raw);
+        cb?.(okAck(homePlaceFurniture(s.pid, i.furnitureId, i.x, i.y, i.dir, i.layer)));
+      } catch (err) { sendError(socket, cb, err); }
+    });
+
+    socket.on('home.furniture.move', (raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const s = requireAuth(socket);
+        const i = parse(HomeFurnitureMove, raw);
+        cb?.(okAck(homeMoveFurniture(s.pid, i.id, i.x, i.y, i.dir)));
+      } catch (err) { sendError(socket, cb, err); }
+    });
+
+    socket.on('home.furniture.remove', (raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const s = requireAuth(socket);
+        const i = parse(HomeIdOnly, raw);
+        cb?.(okAck(homeRemoveFurniture(s.pid, i.id)));
+      } catch (err) { sendError(socket, cb, err); }
+    });
+
+    socket.on('home.furniture.snapshot', (raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        const s = requireAuth(socket);
+        const input = parse(HomePidOnly, raw);
+        const r = homeEnter(s.pid, input.ownerPid);
+        cb?.(okAck({ furniture: r.furniture }));
       } catch (err) { sendError(socket, cb, err); }
     });
   });

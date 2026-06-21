@@ -19,6 +19,11 @@ export function isBlocked(viewer: number, target: number): boolean {
   return v;
 }
 
+export function isFriend(self: number, other: number): boolean {
+  if (self === other) return true;
+  return repo.isRelation(self, other, 'friend');
+}
+
 export function addFriend(self: number, other: number): void {
   if (self === other) throw new AppError('BAD_INPUT', 'cannot friend self');
   if (!findCharacterById(other)) throw new AppError('NOT_FOUND', 'target not found');
