@@ -33,7 +33,7 @@ interface ItemDef {
   note?: string;
 }
 
-type HomeMapTable = Record<string, Record<string, Record<string, number>>>;
+type HomeMapTable = Record<string, Record<string, number>>; // tier -> style -> mapId（两栋按 tier 合并，等级不重叠）
 
 function extractMaps(): { table: HomeMapTable; count: number } {
   const arr = JSON.parse(readFileSync(join(DATA_DIR, 'MapInfos.json'), 'utf8')) as (MapInfo | null)[];
@@ -44,11 +44,10 @@ function extractMaps(): { table: HomeMapTable; count: number } {
     const m = HOME_RE.exec(mi.name);
     if (!m) continue;
     const building = BUILDING[m[1] ?? ''];
-    if (!building) continue;
+    if (!building) continue; // 仅过滤合法楼栋；扁平表按 tier 索引，building 运行期由 tier 派生
     const tier = String(parseInt(m[2] ?? '0', 10));
     const style = m[3] ?? 'base';
-    const byBuilding = (table[building] ??= {});
-    const byTier = (byBuilding[tier] ??= {});
+    const byTier = (table[tier] ??= {});
     byTier[style] = mi.id;
     if (tier === '0') byTier['base'] = mi.id; // 默认风格别名，便于新家园（style='base'）直接解析
     count += 1;
@@ -97,8 +96,8 @@ function main(): void {
   });
   seed(furniture);
 
-  const buildings = Object.keys(table).length;
-  console.log(`home maps: ${count} variants across ${buildings} buildings -> ${OUT_MAP}`);
+  const tiers = Object.keys(table).length;
+  console.log(`home maps: ${count} variants across ${tiers} tiers -> ${OUT_MAP}`);
   console.log(`home furniture: ${furniture.length} items -> ${OUT_FURN} + seeded home_furniture_catalog`);
 }
 

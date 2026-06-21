@@ -5,7 +5,7 @@ import { AppError } from '../../util/errors.js';
 import * as invRepo from '../inventory/inventoryRepo.js';
 import { findCharacterById } from '../player/playerRepo.js';
 import { isFriend, isBlocked } from '../social/socialService.js';
-import { resolveBaseMap, spawnFor, stylesForTier } from './homeMaps.js';
+import { resolveBaseMap, spawnFor, stylesForTier, buildingForTier } from './homeMaps.js';
 import * as repo from './homeRepo.js';
 
 let io: Server | null = null;
@@ -21,6 +21,20 @@ export function homeVirtualMapId(ownerPid: number): number {
 
 function roomOf(virtualMapId: number): string {
   return `map:${virtualMapId}`;
+}
+
+function slotsForTier(tier: number): number {
+  return config.homeBaseFurnSlots + tier * config.homeFurnSlotPerTier;
+}
+
+function gardenForTier(tier: number): 0 | 1 {
+  return tier >= config.homeGardenTier ? 1 : 0;
+}
+
+// 新家起始档位由 config.homeStartTier 决定（默认 0 毛坯；可后期调 1 直接住椰树大厦）。
+function ensureOwnHome(pid: number): void {
+  const tier = config.homeStartTier;
+  repo.ensureHome(pid, buildingForTier(tier), tier, 'base', slotsForTier(tier), gardenForTier(tier), Date.now());
 }
 
 export interface HomeFurnitureView {
@@ -57,7 +71,7 @@ function furnitureView(rows: repo.FurnitureRow[]): HomeFurnitureView[] {
   }));
 }
 
-// 访客可见性校验：home 缺行按 private 处理（访客拒；房主进自家有 ensureHome 兜底）。
+// 访客可见性校验：home 缺行按 private 处理（访客拒；房主进自家有 ensureOwnHome 兜底）。
 function assertCanView(home: repo.HomeRow | undefined, selfPid: number, ownerPid: number): void {
   if (ownerPid === selfPid) return;
   if (isBlocked(ownerPid, selfPid)) throw new AppError('BLOCKED', 'you are blocked by the owner');
@@ -69,22 +83,23 @@ function assertCanView(home: repo.HomeRow | undefined, selfPid: number, ownerPid
 export function enter(selfPid: number, ownerPid?: number): HomeEnterResult {
   const target = ownerPid ?? selfPid;
   if (!findCharacterById(target)) throw new AppError('NOT_FOUND', 'character not found');
-  if (target === selfPid) repo.ensureHome(target, Date.now());
+  if (target === selfPid) ensureOwnHome(target);
   const home = repo.getHome(target);
   assertCanView(home, selfPid, target);
   if (!home) throw new AppError('INTERNAL', 'home row missing', 500);
+  const building = buildingForTier(home.tier);
   return {
     ownerPid: target,
     virtualMapId: homeVirtualMapId(target),
-    baseMapId: resolveBaseMap(home.building, home.tier, home.style),
-    building: home.building,
+    baseMapId: resolveBaseMap(home.tier, home.style),
+    building,
     tier: home.tier,
     style: home.style,
     gardenUnlocked: home.garden_unlocked === 1,
     visibility: home.visibility,
     canEdit: target === selfPid,
     furniture: furnitureView(repo.listFurniture(target)),
-    spawn: spawnFor(home.building),
+    spawn: spawnFor(building),
   };
 }
 
@@ -100,7 +115,7 @@ export function setVisibility(
   pid: number,
   visibility: 'private' | 'friends' | 'public',
 ): { visibility: string } {
-  repo.ensureHome(pid, Date.now());
+  ensureOwnHome(pid);
   repo.tx((db) => repo.setVisibility(db, pid, visibility, Date.now()));
   broadcast(pid, 'home.update.evt', { visibility });
   return { visibility };
@@ -108,7 +123,7 @@ export function setVisibility(
 
 export function setStyle(pid: number, style: string): { style: string } {
   const home = mustHome(pid);
-  if (!stylesForTier(home.building, home.tier).includes(style)) {
+  if (!stylesForTier(home.tier).includes(style)) {
     throw new AppError('BAD_STYLE', 'style not unlocked for current tier');
   }
   repo.tx((db) => repo.setStyle(db, pid, style, Date.now()));
@@ -116,7 +131,12 @@ export function setStyle(pid: number, style: string): { style: string } {
   return { style };
 }
 
-export function upgrade(pid: number): { tier: number; furnitureSlots: number; gardenUnlocked: boolean } {
+export function upgrade(pid: number): {
+  tier: number;
+  building: string;
+  furnitureSlots: number;
+  gardenUnlocked: boolean;
+} {
   const result = repo.tx((db) => {
     const home = repo.getHome(pid);
     if (!home) throw new AppError('INTERNAL', 'home missing', 500);
@@ -135,13 +155,18 @@ export function upgrade(pid: number): { tier: number; furnitureSlots: number; ga
       if (invRepo.getGold(pid) < price) throw new AppError('NOT_ENOUGH_GOLD', `need ${price} gold`);
       invRepo.applyGoldDelta(db, pid, -price);
     }
-    const slots = config.homeBaseFurnSlots + nextTier * config.homeFurnSlotPerTier;
+    const building = buildingForTier(nextTier); // 跨 6→7 自动从椰树大厦切空中花园
+    const slots = slotsForTier(nextTier);
     const garden: 0 | 1 = nextTier >= config.homeGardenTier ? 1 : home.garden_unlocked;
-    repo.updateTier(db, pid, nextTier, slots, garden, Date.now());
-    return { tier: nextTier, furnitureSlots: slots, gardenUnlocked: garden === 1 };
+    repo.updateTier(db, pid, building, nextTier, slots, garden, Date.now());
+    return { tier: nextTier, building, furnitureSlots: slots, gardenUnlocked: garden === 1 };
   });
-  broadcast(pid, 'home.update.evt', { tier: result.tier, gardenUnlocked: result.gardenUnlocked });
-  log.info({ pid, tier: result.tier }, 'home upgraded');
+  broadcast(pid, 'home.update.evt', {
+    tier: result.tier,
+    building: result.building,
+    gardenUnlocked: result.gardenUnlocked,
+  });
+  log.info({ pid, tier: result.tier, building: result.building }, 'home upgraded');
   return result;
 }
 
@@ -155,7 +180,7 @@ export function placeFurniture(
 ): { id: number } {
   return repo.tx((db) => {
     if (!repo.isFurniture(furnitureId)) throw new AppError('NOT_FURNITURE', 'not a placeable furniture');
-    repo.ensureHome(pid, Date.now());
+    ensureOwnHome(pid);
     const home = repo.getHome(pid);
     if (!home) throw new AppError('INTERNAL', 'home missing', 500);
     const cap = Math.min(home.furniture_slots, config.homeMaxFurniture);
@@ -203,7 +228,7 @@ export function removeFurniture(pid: number, id: number): { ok: true; furnitureI
 }
 
 function mustHome(pid: number): repo.HomeRow {
-  repo.ensureHome(pid, Date.now());
+  ensureOwnHome(pid);
   const h = repo.getHome(pid);
   if (!h) throw new AppError('INTERNAL', 'home missing', 500);
   return h;

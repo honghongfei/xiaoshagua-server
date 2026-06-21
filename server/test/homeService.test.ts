@@ -221,3 +221,17 @@ describe('homeService hardening (N1/N2)', () => {
     expectCode(() => home.furnitureSnapshot(me, 999_999), 'NOT_FOUND');
   });
 });
+
+describe('homeService building progression (方案 b)', () => {
+  it('tier 1~6 stays coconut, crossing to 7 switches to skygarden', () => {
+    const pid = mkChar({ gold: 999_999_999 });
+    home.enter(pid); // 起始 tier = homeStartTier(默认 0)
+    let r = home.upgrade(pid); // -> tier 1
+    while (r.tier < 6) r = home.upgrade(pid);
+    expect(r.tier).toBe(6);
+    expect(r.building).toBe('coconut'); // 椰树大厦低阶
+    r = home.upgrade(pid); // 6 -> 7
+    expect(r.tier).toBe(7);
+    expect(r.building).toBe('skygarden'); // 满后切空中花园
+  });
+});

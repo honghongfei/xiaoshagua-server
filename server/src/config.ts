@@ -58,6 +58,7 @@ export const config = {
   // 家园模块（Home）
   homeVirtualBase: num(process.env.HOME_VBASE, 20_000_000),
   homeMaxTier: num(process.env.HOME_MAX_TIER, 17),
+  homeStartTier: num(process.env.HOME_START_TIER, 0), // 新家起始档位（0=毛坯，1=椰树大厦1级），后期可调
   homeBaseFurnSlots: num(process.env.HOME_BASE_SLOTS, 20),
   homeFurnSlotPerTier: num(process.env.HOME_SLOT_PER_TIER, 4),
   homeGardenTier: num(process.env.HOME_GARDEN_TIER, 4),
