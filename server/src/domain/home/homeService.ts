@@ -142,6 +142,7 @@ export function placeFurniture(
 ): { id: number } {
   return repo.tx((db) => {
     if (!repo.isFurniture(furnitureId)) throw new AppError('NOT_FURNITURE', 'not a placeable furniture');
+    repo.ensureHome(pid, Date.now());
     const home = repo.getHome(pid);
     if (!home) throw new AppError('INTERNAL', 'home missing', 500);
     const cap = Math.min(home.furniture_slots, config.homeMaxFurniture);
