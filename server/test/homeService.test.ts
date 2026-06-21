@@ -235,3 +235,41 @@ describe('homeService building progression (方案 b)', () => {
     expect(r.building).toBe('skygarden'); // 满后切空中花园
   });
 });
+
+describe('homeService.migrate (老存档迁移)', () => {
+  it('migrates a fresh home up to the local tier/style', () => {
+    const pid = mkChar();
+    home.enter(pid); // tier 0
+    const r = home.migrate(pid, 5, '米黄');
+    expect(r.migrated).toBe(true);
+    expect(r.tier).toBe(5);
+    expect(r.building).toBe('coconut');
+    expect(home.enter(pid).tier).toBe(5);
+  });
+
+  it('no-ops when the server home already progressed (guard)', () => {
+    const pid = mkChar({ gold: 999_999_999 });
+    home.enter(pid);
+    home.upgrade(pid); // 服务端 tier -> 1 (> homeStartTier 0)
+    const r = home.migrate(pid, 9, '古典');
+    expect(r.migrated).toBe(false);
+    expect(r.tier).toBe(1); // 不被本地覆盖
+  });
+
+  it('clamps tier above max and switches building', () => {
+    const pid = mkChar();
+    home.enter(pid);
+    const r = home.migrate(pid, 99, '巨蛇座');
+    expect(r.migrated).toBe(true);
+    expect(r.tier).toBe(17);
+    expect(r.building).toBe('skygarden');
+  });
+
+  it('falls back to a valid style when the given style is unknown', () => {
+    const pid = mkChar();
+    home.enter(pid);
+    const r = home.migrate(pid, 5, '不存在的风格');
+    expect(r.migrated).toBe(true);
+    expect(['浅粉', '米黄']).toContain(r.style);
+  });
+});

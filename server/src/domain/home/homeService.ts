@@ -170,6 +170,40 @@ export function upgrade(pid: number): {
   return result;
 }
 
+// 老存档迁移：把客户端从本地开关反推的房型 tier/style 灌入服务端。
+// 护栏：仅当服务端仍是初始档(tier <= homeStartTier)时才迁移，杜绝覆盖线上已升级进度；
+//       只升不降、tier 夹取到 [0, homeMaxTier]、style 非法则取该档首个风格。幂等。
+export function migrate(
+  pid: number,
+  tier: number,
+  style: string,
+): { tier: number; building: string; style: string; migrated: boolean } {
+  ensureOwnHome(pid);
+  const result = repo.tx((db) => {
+    const home = repo.getHome(pid);
+    if (!home) throw new AppError('INTERNAL', 'home missing', 500);
+    let t = Math.floor(Number(tier));
+    if (!Number.isFinite(t) || t < 0) t = 0;
+    if (t > config.homeMaxTier) t = config.homeMaxTier;
+    if (home.tier > config.homeStartTier || t <= home.tier) {
+      // 服务端已有进度，或本地不比服务端高 → no-op
+      return { tier: home.tier, building: buildingForTier(home.tier), style: home.style, migrated: false };
+    }
+    const building = buildingForTier(t);
+    const garden: 0 | 1 = t >= config.homeGardenTier ? 1 : home.garden_unlocked;
+    repo.updateTier(db, pid, building, t, slotsForTier(t), garden, Date.now());
+    const styles = stylesForTier(t);
+    const s = typeof style === 'string' && styles.includes(style) ? style : styles[0] ?? 'base';
+    repo.setStyle(db, pid, s, Date.now());
+    return { tier: t, building, style: s, migrated: true };
+  });
+  if (result.migrated) {
+    broadcast(pid, 'home.update.evt', { tier: result.tier, building: result.building, style: result.style });
+    log.info({ pid, tier: result.tier, style: result.style }, 'home migrated from local save');
+  }
+  return result;
+}
+
 export function placeFurniture(
   pid: number,
   furnitureId: number,

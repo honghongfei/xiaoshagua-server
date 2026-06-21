@@ -150,6 +150,7 @@ import {
   moveFurniture as homeMoveFurniture,
   removeFurniture as homeRemoveFurniture,
   furnitureSnapshot as homeFurnitureSnapshot,
+  migrate as homeMigrate,
 } from '../domain/home/homeService.js';
 import {
   HomeEnter,
@@ -159,6 +160,7 @@ import {
   HomeFurniturePlace,
   HomeFurnitureMove,
   HomeIdOnly,
+  HomeMigrate,
 } from '../util/schema.js';
 import { failAck, okAck, type AckResponse, type GameSocket } from './types.js';
 
@@ -903,6 +905,16 @@ export function installRouter(io: Server): void {
         if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
         const s = requireAuth(socket);
         cb?.(okAck(homeUpgrade(s.pid)));
+      } catch (err) { sendError(socket, cb, err); }
+    });
+
+    socket.on('home.migrate', (raw, ack) => {
+      const cb = safeAck(ack);
+      try {
+        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
+        const s = requireAuth(socket);
+        const i = parse(HomeMigrate, raw);
+        cb?.(okAck(homeMigrate(s.pid, i.tier, i.style)));
       } catch (err) { sendError(socket, cb, err); }
     });
 

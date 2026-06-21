@@ -72,25 +72,72 @@
     return SceneManager._scene && SceneManager._scene._spriteset;
   }
 
-  // ---------- 进入 / 离开家园 ----------
-  Home.enterHome = function (ownerPid) {
-    if (!Core.isOnline()) { flash('未联机'); return; }
-    Net.request('home.enter', ownerPid ? { ownerPid } : {})
-      .then((res) => {
-        Home.current = res;
-        editMode = false;
-        selectedFurnitureId = null;
-        // 直接传送到服务端指定的装修底图（装修由 baseMapId 决定，无需设开关）。
-        $gamePlayer.reserveTransfer(res.baseMapId, res.spawn.x, res.spawn.y, res.spawn.d || 2, 0);
-        flash('进入' + (res.canEdit ? '你的家园' : ((res.ownerName || ('#' + res.ownerPid)) + ' 的家园')) + '（' + buildingName(res.building) + ' Lv' + res.tier + '）');
-        Util.log('info', 'home enter ok owner=' + res.ownerPid + ' virt=' + res.virtualMapId + ' base=' + res.baseMapId);
-      })
-      .catch(onErr);
-  };
-
   function buildingName(b) {
     return b === 'skygarden' ? '空中花园' : '椰树大厦';
   }
+
+  // ---------- 老存档迁移（H-D）：本地开关 582~611 -> 房型(tier,style) ----------
+  // 映射来自 data/CommonEvents.json 的「升X级房型YY系」事件（每个翻一个开关）。
+  const SWITCH_HOUSE = {
+    582: { t: 2, s: '米黄' }, 583: { t: 3, s: '米黄' }, 584: { t: 3, s: '普通' },
+    585: { t: 4, s: '米黄' }, 586: { t: 4, s: '粉黄' }, 587: { t: 4, s: '浅蓝' }, 588: { t: 4, s: '浅绿' },
+    589: { t: 5, s: '米黄' }, 590: { t: 5, s: '浅粉' },
+    591: { t: 6, s: '米黄' }, 592: { t: 6, s: '温馨' }, 593: { t: 6, s: '七彩' }, 594: { t: 6, s: '古典' }, 595: { t: 6, s: '幽兰' },
+    596: { t: 7, s: '七彩' }, 597: { t: 7, s: '黑色' }, 598: { t: 7, s: '绯红' }, 599: { t: 7, s: '普通' }, 600: { t: 7, s: '简约' },
+    601: { t: 8, s: '仙女座' }, 602: { t: 9, s: '古典' }, 603: { t: 10, s: '七彩' }, 604: { t: 10, s: '普通' },
+    605: { t: 11, s: '双鱼座' }, 606: { t: 12, s: '巨熊座' }, 607: { t: 13, s: '未来系' }, 608: { t: 14, s: '天燕座' },
+    609: { t: 15, s: '海豚座' }, 610: { t: 16, s: '巨蟹座' }, 611: { t: 17, s: '巨蛇座' },
+  };
+  let _migrateTried = false;
+
+  function readLocalHouse() {
+    if (typeof $gameSwitches === 'undefined' || !$gameSwitches) return null;
+    let best = null;
+    for (const sid of Object.keys(SWITCH_HOUSE)) {
+      if ($gameSwitches.value(Number(sid))) {
+        const info = SWITCH_HOUSE[sid];
+        if (!best || info.t > best.tier) best = { tier: info.t, style: info.s };
+      }
+    }
+    return best;
+  }
+
+  // ---------- 进入 / 离开家园 ----------
+  function applyEnter(res) {
+    Home.current = res;
+    editMode = false;
+    selectedFurnitureId = null;
+    // 直接传送到服务端指定的装修底图（装修由 baseMapId 决定，无需设开关）。
+    $gamePlayer.reserveTransfer(res.baseMapId, res.spawn.x, res.spawn.y, res.spawn.d || 2, 0);
+    flash('进入' + (res.canEdit ? '你的家园' : ((res.ownerName || ('#' + res.ownerPid)) + ' 的家园')) + '（' + buildingName(res.building) + ' Lv' + res.tier + '）');
+    Util.log('info', 'home enter ok owner=' + res.ownerPid + ' virt=' + res.virtualMapId + ' base=' + res.baseMapId);
+  }
+
+  Home.enterHome = function (ownerPid) {
+    if (!Core.isOnline()) { flash('未联机'); return; }
+    const isOwn = !ownerPid;
+    Net.request('home.enter', ownerPid ? { ownerPid } : {})
+      .then((res) => {
+        // H-D 老存档一次性迁移：仅自家、服务端仍初始档(tier<=0)、本地开关有更高房型时
+        if (isOwn && res.canEdit && !_migrateTried && res.tier <= 0) {
+          _migrateTried = true;
+          const local = readLocalHouse();
+          if (local && local.tier > res.tier) {
+            return Net.request('home.migrate', { tier: local.tier, style: local.style }, 6000)
+              .then((m) => {
+                if (m && m.migrated) {
+                  flash('已迁移你的老房型到云端：Lv' + m.tier + ' ' + (m.style || ''));
+                  return Net.request('home.enter', {}).then(applyEnter); // 拉迁移后底图
+                }
+                return applyEnter(res);
+              })
+              .catch(() => applyEnter(res)); // 迁移失败不阻断进家
+          }
+        }
+        return applyEnter(res);
+      })
+      .catch(onErr);
+  };
 
   // ---------- 家具精灵（IconSet 图标，挂 tilemap 随地图滚动） ----------
   function makeFurnitureSprite(item) {
@@ -365,6 +412,7 @@
   Net.on('__disconnect__', () => {
     Home.current = null;
     editMode = false;
+    _migrateTried = false;
     clearFurnitureSprites();
     Home.close();
   });
