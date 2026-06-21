@@ -174,8 +174,6 @@
     let mapId = $gameMap.mapId();
     if (G2.Dungeon && G2.Dungeon.current && typeof G2.Dungeon.current.virtualMapId === 'number') {
       mapId = G2.Dungeon.current.virtualMapId;
-    } else if (G2.Home && G2.Home.current && typeof G2.Home.current.virtualMapId === 'number') {
-      mapId = G2.Home.current.virtualMapId;
     }
     const x = $gamePlayer.x | 0;
     const y = $gamePlayer.y | 0;
@@ -353,8 +351,6 @@
     let mapId = $gameMap.mapId();
     if (G2 && G2.Dungeon && G2.Dungeon.current && typeof G2.Dungeon.current.virtualMapId === 'number') {
       mapId = G2.Dungeon.current.virtualMapId;
-    } else if (G2 && G2.Home && G2.Home.current && typeof G2.Home.current.virtualMapId === 'number') {
-      mapId = G2.Home.current.virtualMapId;
     }
     const x = $gamePlayer.x | 0;
     const y = $gamePlayer.y | 0;

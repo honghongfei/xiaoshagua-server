@@ -214,30 +214,6 @@ export const MarketAck = z.object({
   ids: z.array(z.number().int().positive()).max(200),
 });
 
-// --------- 家园（Home） ---------
-export const HomeEnter = z.object({ ownerPid: z.number().int().positive().optional() });
-export const HomePidOnly = z.object({ ownerPid: z.number().int().positive() });
-export const HomeVisibility = z.object({ visibility: z.enum(['private', 'friends', 'public']) });
-export const HomeStyle = z.object({ style: z.string().min(1).max(32) });
-export const HomeFurniturePlace = z.object({
-  furnitureId: z.number().int().positive(),
-  x: z.number().int().min(0).max(999),
-  y: z.number().int().min(0).max(999),
-  dir: z.number().int().refine((v) => v === 2 || v === 4 || v === 6 || v === 8, { message: 'd must be 2/4/6/8' }),
-  layer: z.number().int().min(0).max(3).default(1),
-});
-export const HomeFurnitureMove = z.object({
-  id: z.number().int().positive(),
-  x: z.number().int().min(0).max(999),
-  y: z.number().int().min(0).max(999),
-  dir: z.number().int().refine((v) => v === 2 || v === 4 || v === 6 || v === 8, { message: 'd must be 2/4/6/8' }),
-});
-export const HomeIdOnly = z.object({ id: z.number().int().positive() });
-export const HomeMigrate = z.object({
-  tier: z.number().int().min(0).max(99),
-  style: z.string().min(1).max(32),
-});
-
 export type AuthLoginInput = z.infer<typeof AuthLogin>;
 export type AuthRegisterInput = z.infer<typeof AuthRegister>;
 export type AuthResumeInput = z.infer<typeof AuthResume>;

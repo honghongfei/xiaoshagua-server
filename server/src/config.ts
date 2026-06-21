@@ -50,28 +50,6 @@ export const config = {
   gatherClaimRangeTiles: num(process.env.GATHER_CLAIM_RANGE, 2),
   gatherDefaultRespawnMs: num(process.env.GATHER_DEFAULT_RESPAWN_MS, 1_800_000), // 每点被采后 30 分钟重生
 
-  // 云更新分流（CDN/R2）：配置后 /update/manifest 会把 full/patches 里的下载文件名改写成
-  // `${UPDATE_CDN_BASE}/<file>` 绝对 URL；客户端(XdRs_Online_Update 已支持绝对 URL)直接从
-  // R2/CDN 下载，更新包不再占服务器公网带宽。留空 = 关闭分流，回退本地 /update/download。
-  updateCdnBase: str(process.env.UPDATE_CDN_BASE, ''),
-
-  // 家园模块（Home）
-  homeVirtualBase: num(process.env.HOME_VBASE, 20_000_000),
-  homeMaxTier: num(process.env.HOME_MAX_TIER, 17),
-  homeStartTier: num(process.env.HOME_START_TIER, 0), // 新家起始档位（0=毛坯，1=椰树大厦1级），后期可调
-  homeBaseFurnSlots: num(process.env.HOME_BASE_SLOTS, 20),
-  homeFurnSlotPerTier: num(process.env.HOME_SLOT_PER_TIER, 4),
-  homeGardenTier: num(process.env.HOME_GARDEN_TIER, 4),
-  homeMaxFurniture: num(process.env.HOME_MAX_FURNITURE, 300),
-  // 升级金币兜底价（index = 目标 tier-1），无房型券时用；扣的金币销毁。
-  homeUpgradePrices: [
-    5_000, 20_000, 80_000, 300_000, 1_000_000, 3_000_000, 8_000_000, 20_000_000,
-    50_000_000, 100_000_000, 200_000_000, 300_000_000, 400_000_000, 500_000_000,
-    700_000_000, 900_000_000, 999_000_000,
-  ],
-  // 房型券物品 id（index = 目标 tier-1）；0/缺省 = 该等级无券，仅金币升级。
-  homeVoucherItemIds: [] as number[],
-
   logLevel: str(process.env.LOG_LEVEL, 'info'),
 } as const;
 
