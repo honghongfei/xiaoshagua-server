@@ -12,11 +12,27 @@
 // =============================================================
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const srcDir = path.resolve(
   process.argv[2] || process.env.XSG_RELEASE_SRC || '../xiaoshagua-releases',
 );
 const destDir = path.resolve(process.env.RELEASES_DIR || './releases');
+
+// 云分流相关开关（提前到顶部，下面拷贝/上传逻辑都要用）。
+const cdnBase = (process.env.UPDATE_CDN_BASE || '').replace(/\/+$/, '');
+const r2Remote = (process.env.XSG_R2_REMOTE || '').trim();
+// XSG_SKIP_LOCAL_ZIP=1：服务器只留 manifest，不在 releases/ 落大 zip / 增量包（省磁盘）。
+// 仅当 zip 确实会到 R2（配了 UPDATE_CDN_BASE 或 XSG_R2_REMOTE）才安全跳过；否则客户端回退
+// /update/download 会 404 → 忽略跳过、仍保留本地副本并告警（fail-safe）。
+const wantSkipLocalZip = /^(1|true|yes)$/i.test(process.env.XSG_SKIP_LOCAL_ZIP || '');
+const zipOnRemote = Boolean(cdnBase) || Boolean(r2Remote);
+const skipLocalZip = wantSkipLocalZip && zipOnRemote;
+if (wantSkipLocalZip && !zipOnRemote) {
+  console.warn(
+    '[publish-release] WARN: XSG_SKIP_LOCAL_ZIP=1 但未配 UPDATE_CDN_BASE / XSG_R2_REMOTE，客户端将无处下载 zip；已忽略跳过、仍保留本地副本。',
+  );
+}
 
 function die(msg) {
   console.error('[publish-release] ERROR: ' + msg);
@@ -75,8 +91,20 @@ if (manifest.full.size && zipStat.size !== manifest.full.size) {
 fs.mkdirSync(destDir, { recursive: true });
 
 const destZip = path.join(destDir, zipName);
-fs.copyFileSync(srcZip, destZip);
-console.log(`[publish-release] 全量包 -> ${destZip} (${(zipStat.size / 1048576).toFixed(1)} MB)`);
+if (skipLocalZip) {
+  // 不在服务器落大 zip：清掉同名旧副本(若有)，避免服务器服旧包绕过 R2，仅留 manifest。
+  try {
+    if (fs.existsSync(destZip)) fs.rmSync(destZip);
+  } catch (e) {
+    console.warn(`[publish-release] WARN: 清理旧 zip 失败(${zipName}): ${e.message}`);
+  }
+  console.log(
+    `[publish-release] 全量包跳过本地拷贝(XSG_SKIP_LOCAL_ZIP) -> 仅留 R2，客户端从 ${cdnBase || r2Remote} 下载 (${(zipStat.size / 1048576).toFixed(1)} MB)`,
+  );
+} else {
+  fs.copyFileSync(srcZip, destZip);
+  console.log(`[publish-release] 全量包 -> ${destZip} (${(zipStat.size / 1048576).toFixed(1)} MB)`);
+}
 
 // ---- 合并增量 patch ----
 // make_patch.ps1 产出 patch-<from>-to-<to>.zip + patch-<from>-to-<to>.meta.json,
@@ -123,7 +151,17 @@ for (const mfName of metaFiles) {
       `[publish-release] WARN: patch 包大小(${pStat.size}) 与 meta(${meta.size}) 不一致: ${meta.file}`,
     );
   }
-  fs.copyFileSync(patchZipSrc, path.join(destDir, meta.file));
+  if (skipLocalZip) {
+    // 同 full 包：跳过本地拷贝并清理同名旧增量包，仅把条目写进 manifest（客户端从 R2 取）。
+    try {
+      const oldPatch = path.join(destDir, meta.file);
+      if (fs.existsSync(oldPatch)) fs.rmSync(oldPatch);
+    } catch (e) {
+      console.warn(`[publish-release] WARN: 清理旧增量包失败(${meta.file}): ${e.message}`);
+    }
+  } else {
+    fs.copyFileSync(patchZipSrc, path.join(destDir, meta.file));
+  }
   patches.push({
     from: String(meta.from),
     to: String(meta.to),
@@ -160,5 +198,35 @@ fs.writeFileSync(destManifest, JSON.stringify(outManifest, null, 2), 'utf8');
 console.log(
   `[publish-release] 清单 -> ${destManifest} (latest=${manifest.latest}, minVersion=${minVersion}, patches=${patches.length})`,
 );
+
+// ---- 可选: 把发布物上传到 R2/CDN(分流, 省服务器带宽) ----
+// 设了 XSG_R2_REMOTE(rclone 远端, 如 "r2:xsg-updates") 就用 rclone 上传; 否则只列出待手动上传文件。
+// 客户端从 <UPDATE_CDN_BASE>/<file> 直接下载; 服务端需把 UPDATE_CDN_BASE 配成同一个 base。
+// 上传源固定用 srcDir(构建产物始终在此)，故 XSG_SKIP_LOCAL_ZIP 跳过本地拷贝时仍能上传。
+const uploadFiles = [zipName, ...patches.map((p) => p.file)];
+if (r2Remote) {
+  for (const f of uploadFiles) {
+    try {
+      execFileSync('rclone', ['copyto', path.join(srcDir, f), `${r2Remote}/${f}`], { stdio: 'inherit' });
+      console.log(`[publish-release] 已上传 R2: ${f}`);
+    } catch (e) {
+      console.warn(`[publish-release] WARN: rclone 上传失败(${f})，请手动上传: ${e.message}`);
+    }
+  }
+} else {
+  const tip = skipLocalZip
+    ? '必须手动把以下文件传到 R2 桶根目录（已启用 XSG_SKIP_LOCAL_ZIP，服务器无本地副本，不传则客户端无处下载）：'
+    : '需手动把以下文件传到 R2 桶根目录：';
+  console.log('[publish-release] 未设 XSG_R2_REMOTE，跳过自动上传。' + tip);
+  for (const f of uploadFiles) console.log('   - ' + f + '  (源: ' + path.join(srcDir, f) + ')');
+}
+if (cdnBase) {
+  console.log(`[publish-release] 客户端将从 ${cdnBase}/${zipName} 直接下载（确保已上传 R2，且服务端 .env 已配 UPDATE_CDN_BASE=${cdnBase}）。`);
+} else {
+  console.log('[publish-release] 提示: 服务端 .env 配 UPDATE_CDN_BASE=<你的R2域名> 后, /update/manifest 自动把下载改写到 R2。');
+}
+if (skipLocalZip) {
+  console.log('[publish-release] XSG_SKIP_LOCAL_ZIP: 服务器 releases/ 仅保留 manifest.json（未落大 zip / 增量包），磁盘占用最小化。');
+}
 
 console.log('[publish-release] 完成。客户端 GET /update/manifest 即可拿到新版本。');

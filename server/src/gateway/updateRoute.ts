@@ -1,6 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { config } from '../config.js';
 import { log } from '../log.js';
 
 // 发布物根目录: 默认 <cwd>/releases (pm2 在 server/ 启动, 即 server/releases)。
@@ -28,6 +29,32 @@ function contentTypeFor(name: string): string {
   if (name.endsWith('.zip')) return 'application/zip';
   if (name.endsWith('.json')) return 'application/json; charset=utf-8';
   return 'application/octet-stream';
+}
+
+type FileEntry = { file?: string; [k: string]: unknown };
+type Manifest = { full?: FileEntry; patches?: FileEntry[]; latest?: string; [k: string]: unknown };
+
+// 云更新分流：配置 UPDATE_CDN_BASE 后，把 manifest 里的下载文件名改写成 CDN/R2 绝对 URL。
+// 客户端(XdRs_Online_Update)见到 http(s):// 开头会直接从该 URL 下载，绕过本服务器、省公网带宽。
+// 空文件名 / 已是绝对 URL 的原样保留；未配置 base 时整体原样返回（回退本地 /update/download）。
+function toCdnUrl(fileName: string): string {
+  const base = config.updateCdnBase.replace(/\/+$/, '');
+  if (!base || !fileName || /^https?:\/\//i.test(fileName)) return fileName;
+  return base + '/' + encodeURIComponent(fileName);
+}
+
+function applyCdnBase(mf: Manifest): Manifest {
+  if (!config.updateCdnBase) return mf;
+  const out: Manifest = { ...mf };
+  if (out.full && typeof out.full.file === 'string') {
+    out.full = { ...out.full, file: toCdnUrl(out.full.file) };
+  }
+  if (Array.isArray(out.patches)) {
+    out.patches = out.patches.map((p) =>
+      p && typeof p.file === 'string' ? { ...p, file: toCdnUrl(p.file) } : p,
+    );
+  }
+  return out;
 }
 
 /**
@@ -71,9 +98,13 @@ export function handleUpdate(req: http.IncomingMessage, res: http.ServerResponse
       return true;
     }
     try {
-      const obj = JSON.parse(fs.readFileSync(file, 'utf8'));
-      log.info({ channel, cur, latest: obj && obj.latest }, 'update manifest served');
-      sendJson(res, 200, { ok: true, ...obj });
+      const obj = JSON.parse(fs.readFileSync(file, 'utf8')) as Manifest;
+      const out = applyCdnBase(obj);
+      log.info(
+        { channel, cur, latest: out.latest, cdn: config.updateCdnBase ? true : false },
+        'update manifest served',
+      );
+      sendJson(res, 200, { ok: true, ...out });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       sendJson(res, 500, { ok: false, error: 'manifest parse failed: ' + msg });

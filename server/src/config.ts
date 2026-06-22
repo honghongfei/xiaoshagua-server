@@ -50,6 +50,11 @@ export const config = {
   gatherClaimRangeTiles: num(process.env.GATHER_CLAIM_RANGE, 2),
   gatherDefaultRespawnMs: num(process.env.GATHER_DEFAULT_RESPAWN_MS, 1_800_000), // 每点被采后 30 分钟重生
 
+  // 云更新分流（CDN/R2）：配置后 /update/manifest 会把 full/patches 里的下载文件名改写成
+  // `${UPDATE_CDN_BASE}/<file>` 绝对 URL；客户端(XdRs_Online_Update 已支持绝对 URL)直接走
+  // R2/CDN 下载，更新包不再占服务器公网带宽。留空 = 关闭分流，回退本地 /update/download。
+  updateCdnBase: str(process.env.UPDATE_CDN_BASE, ''),
+
   logLevel: str(process.env.LOG_LEVEL, 'info'),
 } as const;
 
