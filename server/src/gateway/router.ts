@@ -8,7 +8,6 @@ import {
   AuthResume,
   CharRename,
   ChatSend,
-  GatherClaim,
   InventoryGainGold,
   InventoryGainItem,
   InventoryReplace,
@@ -47,13 +46,6 @@ import {
   startTick,
   stats,
 } from '../domain/world/worldService.js';
-import {
-  attachGatherIo,
-  startGatherTick,
-  tryClaim,
-  snapshotForMap,
-  isMapManaged,
-} from '../domain/gather/gatherService.js';
 import {
   attachChatIo,
   broadcastSystem,
@@ -189,8 +181,6 @@ function clearPendingOffline(pid: number): boolean {
 
 export function installRouter(io: Server): void {
   attachIo(io);
-  attachGatherIo(io);
-  startGatherTick();
   attachChatIo(io);
   attachStateIo(io);
   attachTradeIo(io);
@@ -334,8 +324,6 @@ export function installRouter(io: Server): void {
         }
         cb?.(okAck({
           ...snapshot,
-          resources: snapshotForMap(input.mapId),
-          gatherManaged: isMapManaged(input.mapId),
         }));
         // 进图后补发离线期间攒下的寄售通知（卖出回执等）。
         flushMarketNotifications(io, session.pid);
@@ -360,21 +348,6 @@ export function installRouter(io: Server): void {
       }
     });
 
-    socket.on('gather.claim', (raw, ack) => {
-      const cb = safeAck(ack);
-      try {
-        if (!takeToken(socket)) throw new AppError('RATE_LIMIT', 'too many requests');
-        const session = socket.session;
-        if (!session.authed || session.pid === null) throw new AppError('NO_AUTH', 'login required');
-        const input = parse(GatherClaim, raw);
-        // 发货由客户端本地走 Online_Inventory(服务端权威库存)，此处仅做 despawn + 广播 + 排程 respawn，不重复发货
-        const r = tryClaim(session.pid, input.rid);
-        cb?.(r.ok ? okAck({ rid: input.rid }) : failAck(r.code ?? 'CLAIM_FAILED', 'gather claim failed'));
-      } catch (err) {
-        sendError(socket, cb, err);
-      }
-    });
-
     socket.on('player.action', (raw) => {
       try {
         if (!takeToken(socket)) return;
@@ -390,13 +363,6 @@ export function installRouter(io: Server): void {
     socket.on('admin.stats', (_raw, ack) => {
       const cb = safeAck(ack);
       cb?.(okAck({ online: listOnline().length, ...stats() }));
-    });
-
-    // 服务端权威时间下发: 客户端用它做统一时钟 + 防改本地钟作弊。
-    // 轻量、无需鉴权; 客户端做半-RTT 校正算出 serverNow()。
-    socket.on('time.sync', (_raw, ack) => {
-      const cb = safeAck(ack);
-      cb?.(okAck({ t: Date.now() }));
     });
 
     // 在线玩家列表(联机中心 Hub 的"在线玩家"格用): 直接私聊/加好友/邀交易, 不必跑到对方身边

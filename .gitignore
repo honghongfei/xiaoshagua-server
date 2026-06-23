@@ -35,3 +35,9 @@ npm-debug.log*
 # Backups
 *.bak
 *.swp
+
+# Secrets / keys (never commit private keys / credentials)
+*.pem
+*.key
+*.p12
+*.pfx
