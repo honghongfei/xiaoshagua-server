@@ -180,7 +180,7 @@ export const PetCreate = z.object({
 export const PetAct = z.object({
   petId: z.number().int().positive(),
   // M6 修：移除 'plant'，未实现。如果以后要加，去 petService.act 实现后再补回。
-  action: z.enum(['feed', 'train', 'evolve']),
+  action: z.enum(['feed', 'train', 'evolve', 'regress']),
 });
 
 export const DungeonEnter = z.object({

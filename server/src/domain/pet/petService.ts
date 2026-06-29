@@ -1,4 +1,6 @@
 import { AppError } from '../../util/errors.js';
+import { config } from '../../config.js';
+import * as invRepo from '../inventory/inventoryRepo.js';
 import * as repo from './petRepo.js';
 import type { PetRow } from './petRepo.js';
 
@@ -74,7 +76,7 @@ function ensureNotCool(r: PetRow): void {
 
 export interface ActResult {
   pet: PetPublic;
-  delta: { exp?: number; leveledUp?: boolean; evolved?: boolean; stage?: number };
+  delta: { exp?: number; leveledUp?: boolean; evolved?: boolean; regressed?: boolean; stage?: number };
 }
 
 export function feed(petId: number, characterId: number): ActResult {
@@ -115,4 +117,23 @@ export function evolve(petId: number, characterId: number): ActResult {
   repo.updatePet(r.id, { stage: r.stage });
   repo.logAction(r.id, characterId, 'evolve', `stage=${targetStage}`);
   return { pet: toPublic(r), delta: { evolved: true, stage: targetStage } };
+}
+
+// 退化回蛋「换形态」：付费把 stage 归 0（回蛋），保留 level / exp，让玩家重新进化换形态。
+// 收费金币销毁（gold sink）。冷却不重置，避免刷动作。
+export function regress(petId: number, characterId: number): ActResult {
+  const r = ensureOwned(petId, characterId);
+  if (r.stage <= 0) throw new AppError('BAD_STATE', 'pet already at egg stage');
+  const fee = config.petRegressFeeGold;
+  return invRepo.tx((db) => {
+    if (fee > 0) {
+      const gold = invRepo.getGold(characterId);
+      if (gold < fee) throw new AppError('NOT_ENOUGH_GOLD', `need ${fee}, have ${gold}`);
+      invRepo.applyGoldDelta(db, characterId, -fee); // 销毁
+    }
+    r.stage = 0;
+    repo.updatePet(r.id, { stage: 0 });
+    repo.logAction(r.id, characterId, 'regress', `to-egg fee=${fee} keepLv=${r.level}`);
+    return { pet: toPublic(r), delta: { stage: 0, regressed: true } };
+  });
 }

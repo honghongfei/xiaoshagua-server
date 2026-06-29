@@ -98,6 +98,7 @@ import {
   evolve as petEvolve,
   feed as petFeed,
   list as petList,
+  regress as petRegress,
   train as petTrain,
 } from '../domain/pet/petService.js';
 import {
@@ -704,6 +705,7 @@ export function installRouter(io: Server): void {
         if (input.action === 'feed') r = petFeed(input.petId, s.pid);
         else if (input.action === 'train') r = petTrain(input.petId, s.pid);
         else if (input.action === 'evolve') r = petEvolve(input.petId, s.pid);
+        else if (input.action === 'regress') r = petRegress(input.petId, s.pid);
         else throw new AppError('NOT_IMPL', 'action not implemented: ' + input.action);
         cb?.(okAck(r));
       } catch (err) { sendError(socket, cb, err); }

@@ -141,7 +141,7 @@ describe('marketService.cancelListing (下架退物)', () => {
 });
 
 describe('marketService.buyListing (拆分购买 + 原子结算)', () => {
-  it('full buy transfers items, pays seller 80%, burns 20%, marks sold', () => {
+  it('full buy transfers items, pays seller full proceeds (fee=0), marks sold', () => {
     const seller = mkChar({ items: [{ kind: 'item', dataId: 10, count: 10 }] });
     const buyer = mkChar({ gold: 1000 });
     const { listingId } = market.createListing(seller, 'item', 10, 10, 10); // unit 10, total 100
@@ -149,10 +149,10 @@ describe('marketService.buyListing (拆分购买 + 原子结算)', () => {
     expect(res.sold).toBe(true);
     expect(res.remaining).toBe(0);
     expect(res.cost).toBe(100);
-    expect(res.fee).toBe(20);
-    expect(res.proceeds).toBe(80);
+    expect(res.fee).toBe(0); // 手续费已取消
+    expect(res.proceeds).toBe(100);
     expect(invRepo.getGold(buyer)).toBe(900); // 1000 - 100
-    expect(invRepo.getGold(seller)).toBe(80); // 80% proceeds, 20 burned
+    expect(invRepo.getGold(seller)).toBe(100); // 全款到账，无销毁
     expect(itemCount(buyer, 'item', 10)).toBe(10);
   });
 
@@ -199,20 +199,26 @@ describe('marketService.buyListing (拆分购买 + 原子结算)', () => {
     expectCode(() => market.buyListing(buyer, listingId, 1), 'LISTING_GONE');
   });
 
-  it('floors the 20% fee (cost 99 -> fee 19, proceeds 80)', () => {
-    const seller = mkChar({ items: [{ kind: 'item', dataId: 16, count: 11 }] });
-    const buyer = mkChar({ gold: 1000 });
-    const { listingId } = market.createListing(seller, 'item', 16, 11, 9); // unit 9
-    const res = market.buyListing(buyer, listingId, 11); // cost 99
-    expect(res.cost).toBe(99);
-    expect(res.fee).toBe(19); // floor(99 * 0.2) = 19
-    expect(res.proceeds).toBe(80);
+  it('applies fee bps when configured (cost 99 -> fee 19, proceeds 80)', () => {
+    const prevFee = config.marketFeeBps;
+    (config as { marketFeeBps: number }).marketFeeBps = 2000; // 显式开启 20% 验证费率算法
+    try {
+      const seller = mkChar({ items: [{ kind: 'item', dataId: 16, count: 11 }] });
+      const buyer = mkChar({ gold: 1000 });
+      const { listingId } = market.createListing(seller, 'item', 16, 11, 9); // unit 9
+      const res = market.buyListing(buyer, listingId, 11); // cost 99
+      expect(res.cost).toBe(99);
+      expect(res.fee).toBe(19); // floor(99 * 0.2) = 19
+      expect(res.proceeds).toBe(80);
+    } finally {
+      (config as { marketFeeBps: number }).marketFeeBps = prevFee;
+    }
   });
 
   it('clamps seller gold at GOLD_CAP, burning the overflow', () => {
     const seller = mkChar({ gold: GOLD_CAP - 10, items: [{ kind: 'item', dataId: 17, count: 10 }] });
     const buyer = mkChar({ gold: 1000 });
-    const { listingId } = market.createListing(seller, 'item', 17, 10, 10); // proceeds 80
+    const { listingId } = market.createListing(seller, 'item', 17, 10, 10); // proceeds 100 (fee=0)
     market.buyListing(buyer, listingId, 10);
     expect(invRepo.getGold(seller)).toBe(GOLD_CAP); // capped; overflow burned
   });

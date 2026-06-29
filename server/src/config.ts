@@ -36,7 +36,7 @@ export const config = {
   maxItemDeltaPerCall: num(process.env.MAX_ITEM_DELTA_PER_CALL, 1_000),
 
   // 寄售行（Consignment House）
-  marketFeeBps: num(process.env.MARKET_FEE_BPS, 2000), // 手续费 20% = 2000/10000，销毁
+  marketFeeBps: num(process.env.MARKET_FEE_BPS, 0), // 取消寄售手续费：卖家拿全款（0/10000）
   marketDefaultSlots: num(process.env.MARKET_DEFAULT_SLOTS, 2),
   marketMaxSlots: num(process.env.MARKET_MAX_SLOTS, 10),
   // 第 3..10 格解锁价（index 0 = 第3格）；扣的金币销毁。顺序解锁。
@@ -44,6 +44,9 @@ export const config = {
   marketMaxUnitPrice: num(process.env.MARKET_MAX_UNIT_PRICE, 999_999_999), // 对齐资产 GOLD_CAP
   marketMaxStack: num(process.env.MARKET_MAX_STACK, 9_999), // 对齐 ITEM_CAP
   marketBrowsePageMax: num(process.env.MARKET_BROWSE_PAGE_MAX, 50),
+
+  // 宠物（Pet）：退化回蛋「换形态」收费（金币，销毁）。stage 归 0、保留等级/经验。
+  petRegressFeeGold: num(process.env.PET_REGRESS_FEE_GOLD, 50_000),
 
   // 地上物云端共享（Cloud-Shared Gather）
   gatherTickMs: num(process.env.GATHER_TICK_MS, 0), // 0 = 复用 worldTickMs（startGatherTick 兜底）
